@@ -13,6 +13,8 @@ Usage:
     python property_tax_estimator.py --county denver --value 625000
     python property_tax_estimator.py --county douglas --value 750000 --school-mills 52.1
     python property_tax_estimator.py --all --value 625000
+    python property_tax_estimator.py --vendors
+    python property_tax_estimator.py --reports
     python property_tax_estimator.py --help
 """
 
@@ -143,6 +145,156 @@ COUNTIES: dict[str, CountyTaxProfile] = {
             "Median effective rate ~0.51% of market value.",
         ],
     ),
+}
+
+
+# ---------------------------------------------------------------------------
+# Vendors — real estate service providers across the Denver metro
+# ---------------------------------------------------------------------------
+
+VENDORS = {
+    "title_companies": {
+        "label": "Title Companies",
+        "cost_range": "~0.5-1.0% of purchase price for owner's policy",
+        "entries": [
+            {"name": "Land Title Guarantee Company", "url": "https://www.ltgc.com/",
+             "notes": "Colorado's largest locally-owned. 50+ offices, 50k+ closings/yr."},
+            {"name": "Chicago Title Colorado", "url": "https://www.chicagotitle.com/",
+             "notes": "Part of Fidelity National Financial. Largest national underwriter."},
+            {"name": "First American Title", "url": "https://www.firstam.com/",
+             "notes": "National 'Big Four' underwriter with strong Denver metro presence."},
+            {"name": "Heritage Title Company", "url": "https://www.heritagetitleco.com/",
+             "notes": "Serving Colorado since 1977. Local presence across metro."},
+            {"name": "First Integrity Title Company", "url": "https://www.firstintegritytitle.com/",
+             "notes": "Covers Adams, Arapahoe, Denver, Douglas, Jefferson + more."},
+        ],
+    },
+    "appraisers": {
+        "label": "Residential Appraisers",
+        "cost_range": "$450-$800 standard; $800-$1,200 complex/luxury",
+        "entries": [
+            {"name": "Colorado Appraisal Consultants", "url": "https://www.appraisalcolorado.com/",
+             "notes": "Residential + commercial. Also handles tax appeal appraisals."},
+            {"name": "Premier Appraisal Services", "url": "https://www.premierappraisalsvcs.com/",
+             "notes": "20+ years, Denver metro and Front Range."},
+            {"name": "Skyline Appraisal", "url": "https://www.skylineappraisalcorp.com/",
+             "notes": "Northern CO and entire Denver metro. 5,000+ sq mi coverage."},
+            {"name": "Colorado Appraisal Xperts", "url": "https://www.coloradoappraisalxperts.com/",
+             "notes": "20+ years. Specializes in trust/estate, divorce, PMI removal."},
+        ],
+    },
+    "inspectors": {
+        "label": "Home Inspection Companies",
+        "cost_range": "$310-$720 by sq ft; radon add $100-200; sewer scope add $100-250",
+        "entries": [
+            {"name": "Axium Inspections", "url": "https://axiuminspections.com/",
+             "notes": "Colorado's largest. 6,000+ 5-star reviews. Same-day scheduling."},
+            {"name": "A-Pro Home Inspection Denver", "url": "https://www.a-prohomeinspection.com/",
+             "notes": "Since 1994. 500-point inspections. CHI/PHI/ITI certified."},
+            {"name": "HouseMaster Denver North", "url": "https://housemaster.com/denvernorth",
+             "notes": "National franchise. Next-day reports with photos."},
+            {"name": "Inspections Over Coffee", "url": "https://www.inspectionsovercoffee.com/",
+             "notes": "360-degree snapshots. Structural, mechanical, environmental."},
+        ],
+    },
+    "insurance": {
+        "label": "Rental / Investment Property Insurance",
+        "cost_range": "$900-$2,900/yr; Colorado avg ~$1,600/yr (hail/fire risk)",
+        "entries": [
+            {"name": "Steadily", "url": "https://www.steadily.com/states/colorado",
+             "notes": "Online-first landlord platform. Single/multi/short-term rental."},
+            {"name": "NREIG", "url": "https://nreig.com/insurance-by-state/colorado/",
+             "notes": "Investment-property specialist. Month-to-month, no lock-in."},
+            {"name": "Associated Agents Insurance", "url": "https://www.insurecolo.com/real-estate-investor/",
+             "notes": "Lakewood, CO. Shops multiple carriers. Portfolios welcome."},
+            {"name": "Wexford Insurance", "url": "https://www.wexfordins.com/investment/colorado",
+             "notes": "Investment property specialist. $700-$5,000/yr typical."},
+        ],
+    },
+    "property_management": {
+        "label": "Property Management Companies",
+        "cost_range": "8-12% of rent/mo; tenant placement 50-100% of 1 month",
+        "entries": [
+            {"name": "Grace Property Management", "url": "https://www.rentgrace.com/",
+             "notes": "Since 1978. Ranked #1 Denver by PropertyManagement.com."},
+            {"name": "Laureate LTD", "url": "https://www.laureateltd.com/",
+             "notes": "Since 1982. 1,000+ properties. 24-hour emergency service."},
+            {"name": "Pioneer Property Management", "url": "https://rentmedenver.com/",
+             "notes": "17+ years. Best PM company 8 years running."},
+            {"name": "Real Property Mgmt Colorado", "url": "https://realpropertymanagementcolorado.com/",
+             "notes": "From $125/mo. 29-day rental promise (avg 25.7 days)."},
+        ],
+    },
+    "tax_appeal": {
+        "label": "Property Tax Appeal Consultants",
+        "cost_range": "Contingency: 25-50% of first-year tax savings (no upfront fee)",
+        "entries": [
+            {"name": "Paramount Property Tax Appeal", "url": "https://www.paramountpropertytaxappeal.com/",
+             "notes": "Contingency basis. Full-service protest + representation."},
+            {"name": "Downey & Associates, PC", "url": "https://coloradopropertytaxattorney.com/",
+             "notes": "30+ years CO property tax law. Precedent-setting cases."},
+            {"name": "Catalyst Property Tax Consultants", "url": "https://catalystpropertytax.com/",
+             "notes": "Colorado-based, local market knowledge."},
+            {"name": "Ryan (Denver Office)", "url": "https://ryan.com/practice-areas/property-tax/denver/",
+             "notes": "Large national firm. 8-30+ yr experienced Denver consultants."},
+        ],
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Reports — public data sources, market reports, assessment documents
+# ---------------------------------------------------------------------------
+
+COUNTY_REPORTS = {
+    "denver": {
+        "abstract_of_assessment": "https://denver.prelive.opencities.com/files/assets/public/v/2/finance/documents/assessor/2025/denver-2024_abstract.pdf",
+        "assessor_forms": "https://denvergov.org/Government/Agencies-Departments-Offices/Agencies-Departments-Offices-Directory/Department-of-Finance/Our-Divisions/Assessors-Office/View-and-Download-Forms",
+        "protest_info": "Online protest at denvergov.org/Property; email assmt.protest@denvergov.org; phone 720-913-4164",
+    },
+    "douglas": {
+        "abstract_of_assessment": "https://www.douglas.co.us/assessor/taxing-authorities/",
+        "tax_levy_certification": "https://www.douglas.co.us/budget/certification-tax-levy/",
+        "tax_calculations": "https://www.douglas.co.us/assessor/residential-property-tax-calculations/",
+        "protest_info": "Online, mail, or in person at 100 Third Street, Castle Rock, CO 80104",
+    },
+    "adams": {
+        "abstract_of_assessment": "https://www.adcogov.org/abstract-assessment",
+        "mill_levy_certification": "https://adamscountyco.gov/our-county/budget-finance/mill-levy-certification/",
+        "protest_info": "Email assessor@adamscountyco.gov; phone 720-523-6038; office 4430 S. Adams County Pkwy, Suite C2100, Brighton",
+    },
+    "arapahoe": {
+        "abstract_of_assessment": "https://www.arapahoeco.gov/your_county/county_departments/assessor/assessment_resources/index.php",
+        "mill_levies_and_districts": "https://www.arapahoeco.gov/your_county/county_departments/assessor/mill_levies_and_tax_districts.php",
+        "certification_of_levies": "https://files.arapahoeco.gov/Assessor/Certification%20of%20Levies%20and%20Revenues/2024%20Certification%20of%20Levies%20and%20Revenues.pdf",
+        "protest_info": "Phone 303-795-4600; online at arapahoeco.gov Assessor portal",
+    },
+    "jefferson": {
+        "abstract_of_assessment": "https://www.jeffco.us/446/Abstract-of-Assessments",
+        "tax_authority_reports": "https://www.jeffco.us/3887/Tax-Authority-Information-and-Reports",
+        "tax_levy_certification": "https://www.jeffco.us/3804/Certification-of-Tax-Levies",
+        "valuation_appeal_info": "https://www.jeffco.us/4593/20232024-Property-Valuation",
+        "protest_info": "Phone 303-271-8666; office 100 Jefferson County Parkway, Suite 2500, Golden",
+    },
+}
+
+STATEWIDE_REPORTS = {
+    "DOLA Annual Report": "https://dpt.colorado.gov/annual-reports",
+    "Statewide Abstract of Assessment": "https://dpt.colorado.gov/news-article/2024-abstract-of-assessment-report-and-certification-of-values",
+    "CO Assessed Values Manuals": "https://dpt.colorado.gov/colorado-assessed-values-manuals",
+    "CO Property Tax Map (interactive)": "https://dpt.colorado.gov/property-tax-map",
+    "Understanding CO Property Taxes": "https://dpt.colorado.gov/understanding-property-taxes-in-colorado",
+    "Protests & Appeals Guide": "https://dpt.colorado.gov/protests-and-appeals",
+    "DMAR Market Trends": "https://www.dmarealtors.com/market-trends-reports",
+    "CO Assoc of Realtors Stats": "https://coloradorealtors.com/market-trends/regional-and-statewide-statistics/",
+    "HB24-1302 Mill Levy Dashboard": "https://dlg.colorado.gov/hb24-1302-mill-levy-public-information",
+}
+
+APPEAL_DEADLINES = {
+    "notice_of_valuation": "Mailed ~May 1 (reappraisal years: odd years)",
+    "protest_deadline": "June 8 (or next business day)",
+    "cboe_appeal": "Within 30 days of Notice of Determination",
+    "state_board_appeal": "Within 30 days of CBOE decision",
+    "arbitration_fee": "$150 (binding)",
 }
 
 
@@ -304,8 +456,59 @@ def run_single(county_key: str, market_value: float,
     return est
 
 
+def print_vendors(category: str | None = None):
+    """Print vendor directory, optionally filtered to one category."""
+    cats = {category: VENDORS[category]} if category else VENDORS
+    print(f"\n{'=' * 78}")
+    print(f"  DENVER METRO REAL ESTATE VENDOR DIRECTORY")
+    print(f"{'=' * 78}")
+
+    for key, cat in cats.items():
+        print(f"\n  --- {cat['label']} ---")
+        print(f"  Typical cost: {cat['cost_range']}\n")
+        for v in cat["entries"]:
+            print(f"    {v['name']}")
+            print(f"      {v['url']}")
+            print(f"      {v['notes']}")
+        print()
+
+    print(f"{'=' * 78}")
+
+
+def print_reports(county_key: str | None = None):
+    """Print assessment reports, market data, and appeal info."""
+    print(f"\n{'=' * 78}")
+    print(f"  PROPERTY TAX REPORTS & PUBLIC DATA")
+    print(f"{'=' * 78}")
+
+    # Statewide
+    print(f"\n  --- Colorado Statewide Resources ---\n")
+    for label, url in STATEWIDE_REPORTS.items():
+        print(f"    {label}")
+        print(f"      {url}")
+    print()
+
+    # Appeal deadlines
+    print(f"  --- CO Property Tax Appeal Deadlines ---\n")
+    for label, detail in APPEAL_DEADLINES.items():
+        print(f"    {label.replace('_', ' ').title():40s} {detail}")
+    print()
+
+    # Per-county
+    counties = {county_key: COUNTY_REPORTS[county_key]} if county_key else COUNTY_REPORTS
+    for key, reports in counties.items():
+        profile = COUNTIES[key]
+        print(f"  --- {profile.name} ---\n")
+        for label, url in reports.items():
+            print(f"    {label.replace('_', ' ').title():40s} {url}")
+        print()
+
+    print(f"{'=' * 78}")
+
+
 def main():
     county_choices = list(COUNTIES.keys())
+    vendor_choices = list(VENDORS.keys())
     parser = argparse.ArgumentParser(
         description="Estimate property tax for Denver metro area counties (CO)"
     )
@@ -313,19 +516,42 @@ def main():
                         help="County to estimate (omit for all)")
     parser.add_argument("--all", "-a", action="store_true",
                         help="Show all counties with comparison")
-    parser.add_argument("--value", "-v", type=float, required=True,
+    parser.add_argument("--value", "-v", type=float, default=None,
                         help="Property market value in dollars")
     parser.add_argument("--school-mills", type=float, default=None,
                         help="Override school district mill levy")
     parser.add_argument("--local-mills", type=float, default=None,
                         help="Override total local government mill levy")
+    parser.add_argument("--vendors", nargs="?", const="all", default=None,
+                        metavar="CATEGORY",
+                        help=f"Show vendor directory. Optional category: {', '.join(vendor_choices)}")
+    parser.add_argument("--reports", action="store_true",
+                        help="Show assessment reports, market data, and appeal info")
 
     args = parser.parse_args()
 
-    if args.all or args.county is None:
-        compare_counties(args.value)
-    else:
-        run_single(args.county, args.value, args.school_mills, args.local_mills)
+    ran_something = False
+
+    if args.vendors:
+        cat = None if args.vendors == "all" else args.vendors
+        if cat and cat not in VENDORS:
+            parser.error(f"Unknown vendor category '{cat}'. Choose from: {', '.join(vendor_choices)}")
+        print_vendors(cat)
+        ran_something = True
+
+    if args.reports:
+        print_reports(args.county)
+        ran_something = True
+
+    if args.value is not None:
+        if args.all or args.county is None:
+            compare_counties(args.value)
+        else:
+            run_single(args.county, args.value, args.school_mills, args.local_mills)
+        ran_something = True
+
+    if not ran_something:
+        parser.print_help()
 
 
 if __name__ == "__main__":
