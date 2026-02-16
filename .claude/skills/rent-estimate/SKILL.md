@@ -37,6 +37,16 @@ python rent_estimator.py --county <COUNTY> --beds <N> --urls
 
 This generates search URLs for Zillow, Trulia, Apartments.com, Craigslist, and Rentometer. Use WebFetch on these URLs to pull live rental listings for verification.
 
+## Search nearby rental comps
+
+If the user has a specific address, search for rental comps nearby:
+```bash
+python comp_extractor.py --db-query --type rental --near "<ADDRESS>" --radius 1.5
+python comp_extractor.py --db-query --type rental --near "39.75,-104.99" --radius 2
+```
+
+Run `python comp_extractor.py --geocode` first if comps lack lat/lng.
+
 ## After running
 
 Present the estimate clearly, including:
@@ -45,4 +55,5 @@ Present the estimate clearly, including:
 3. Rent per square foot
 4. How the finish grade affects the number
 5. Suggest using `--urls` if they want live comp verification
-6. For investment analysis, connect to refinance_analyzer.py for cash flow modeling
+6. Suggest `--near` distance search for nearby rental comps
+7. For investment analysis, connect to refinance_analyzer.py for cash flow modeling

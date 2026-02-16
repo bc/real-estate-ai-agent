@@ -43,6 +43,8 @@ Create JSON with an array of objects. For sale comps:
     "city": "Denver",
     "county": "denver",
     "zip_code": "80202",
+    "latitude": 39.7508,
+    "longitude": -104.9965,
     "sale_price": 625000,
     "sale_date": "2026-01-15",
     "beds": 3,
@@ -62,6 +64,8 @@ Create JSON with an array of objects. For sale comps:
   }
 ]
 ```
+
+Include `latitude` and `longitude` if available from the listing. If not, they can be geocoded later with `python comp_extractor.py --geocode`.
 
 For rental comps, use the same format but `sale_price` = monthly rent.
 
@@ -91,15 +95,32 @@ for comp in comps:
 
 Then use the **finish-grade** skill to view and grade kitchen/bathroom photos.
 
-## Step 6: Query saved comps
+## Step 6: Geocode saved comps
 
+After saving, geocode comps for distance searching:
+```bash
+python comp_extractor.py --geocode            # batch geocode all missing
+python comp_extractor.py --geocode-id <ID>    # geocode a single comp
+python comps_db.py geocode                    # via DB CLI
+```
+
+## Step 7: Query saved comps
+
+By county/beds:
 ```bash
 python comp_extractor.py --db-query --type sale --county denver --beds 3
 python comp_extractor.py --db-query --type rental --county denver --beds 3
 python comp_extractor.py --db-stats
 ```
 
-Or the full DB CLI:
+By distance (requires geocoded comps):
+```bash
+python comp_extractor.py --db-query --type sale --near "123 Main St, Denver, CO" --radius 1.5
+python comp_extractor.py --db-query --type sale --near "39.75,-104.99" --radius 2
+python comps_db.py query --type sale --near "39.75,-104.99" --radius 2
+```
+
+Full DB CLI:
 ```bash
 python comps_db.py query --type sale --county denver --beds 3 --min-price 500000
 python comps_db.py query --type rental --county denver --beds 3 --max-price 3500
@@ -112,8 +133,10 @@ python comps_db.py export --type sale --format csv --output sale_comps.csv
 The SQLite database (`data/comps.db`) stores both sale and rental comps in a single `comps` table:
 - `comp_type`: "sale" or "rental"
 - `price`: sale price or monthly rent
+- `latitude`/`longitude`: geocoded location for distance search
 - Common fields: address, city, county, zip, beds, baths, sqft, etc.
 - Sale-specific: sale_date, days_on_market, list_price, sale_to_list
 - Rental-specific: lease_type, available_date, deposit, pet_policy
 - Photos stored as JSON array of URLs
 - Automatic dedup on (comp_type, address, price, source)
+- Spatial index on (latitude, longitude) for fast nearby queries

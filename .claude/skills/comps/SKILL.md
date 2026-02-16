@@ -34,14 +34,35 @@ python comp_extractor.py --db-query --type rental --county <COUNTY> --beds <N>
 python comp_extractor.py --db-stats
 ```
 
+## Distance search (nearby comps)
+
+Search by proximity to a lat/lng point or address:
+```bash
+python comp_extractor.py --db-query --type sale --near "39.75,-104.99" --radius 2
+python comp_extractor.py --db-query --near "123 Main St, Denver, CO" --radius 1.5
+python comps_db.py query --type sale --near "39.75,-104.99" --radius 2
+```
+
+## Geocode comps
+
+Comps are geocoded via OpenStreetMap Nominatim (free, no API key):
+```bash
+python comp_extractor.py --geocode            # batch geocode all missing
+python comp_extractor.py --geocode-id 5       # geocode a single comp
+python comps_db.py geocode                    # same via DB CLI
+python comps_db.py geocode --id 5
+```
+
 ## Full database CLI
 
 ```bash
 python comps_db.py stats                                          # overview
 python comps_db.py query --type sale --county denver --beds 3     # filter
 python comps_db.py query --type rental --min-price 2000           # by rent
+python comps_db.py query --type sale --near "1600 Pennsylvania Ave, Denver" --radius 1
 python comps_db.py export --type sale --format csv -o comps.csv   # export
 python comps_db.py import --file scraped.json --type sale         # import
+python comps_db.py geocode                                        # geocode missing
 ```
 
 ## Scraping workflow
@@ -58,5 +79,7 @@ Follow the **comps-search** sub-skill for the full scrape-and-store pipeline:
 Present comp analysis and remind user:
 - Comps are saved in `data/comps.db` for future queries
 - Use `--db-query` to search without re-scraping
+- Use `--near` + `--radius` for distance-based search around a property
+- Run `--geocode` to geocode comps that lack lat/lng
 - Connect to rent_estimator.py for income projections
 - Connect to refinance_analyzer.py for cash flow modeling

@@ -2,7 +2,8 @@
 SQLite database for storing and querying property comps.
 
 Stores both rental comps and sale comps in a single database with a
-shared schema. Supports insert, query, dedup, and analysis operations.
+shared schema. Supports insert, query, dedup, distance search, and
+analysis operations. Comps carry latitude/longitude for radius queries.
 
 The database is stored at data/comps.db (created on first use).
 Both comp_extractor.py and rent_estimator.py write to and read from this DB.
@@ -10,24 +11,31 @@ Both comp_extractor.py and rent_estimator.py write to and read from this DB.
 Usage as a library:
     from comps_db import CompsDB, CompRow
     db = CompsDB()
-    db.insert(CompRow(comp_type="sale", address="123 Main St", ...))
+    db.insert(CompRow(comp_type="sale", address="123 Main St", latitude=39.75, longitude=-104.99, ...))
     results = db.query(comp_type="sale", county="denver", beds=3)
+    nearby = db.query_nearby(39.75, -104.99, radius_miles=2, comp_type="sale")
+    db.geocode_missing()   # batch geocode comps without lat/lng
     db.stats()
 
 Usage as CLI:
     python comps_db.py stats
     python comps_db.py query --type sale --county denver --beds 3
-    python comps_db.py query --type rental --county denver --min-price 2000
+    python comps_db.py query --type sale --near "39.75,-104.99" --radius 2
+    python comps_db.py geocode                           # geocode all missing
+    python comps_db.py geocode --id 5                    # geocode one record
     python comps_db.py export --type sale --format json
-    python comps_db.py export --type rental --format csv
     python comps_db.py import --file comps.json --type sale
 """
 
 import argparse
 import csv as csv_mod
 import json
+import math
 import os
 import sqlite3
+import time
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from typing import Optional
@@ -45,6 +53,10 @@ CREATE TABLE IF NOT EXISTS comps (
     county          TEXT NOT NULL DEFAULT '',
     zip_code        TEXT NOT NULL DEFAULT '',
     state           TEXT NOT NULL DEFAULT 'CO',
+
+    -- Geocoded location
+    latitude        REAL    NOT NULL DEFAULT 0,
+    longitude       REAL    NOT NULL DEFAULT 0,
 
     price           INTEGER NOT NULL DEFAULT 0,  -- sale price or monthly rent
     price_per_sqft  REAL    NOT NULL DEFAULT 0,
@@ -92,7 +104,68 @@ CREATE INDEX IF NOT EXISTS idx_comps_zip        ON comps(zip_code);
 CREATE INDEX IF NOT EXISTS idx_comps_beds       ON comps(beds);
 CREATE INDEX IF NOT EXISTS idx_comps_price      ON comps(price);
 CREATE INDEX IF NOT EXISTS idx_comps_type_county ON comps(comp_type, county);
+CREATE INDEX IF NOT EXISTS idx_comps_lat_lng    ON comps(latitude, longitude);
 """
+
+# Migration for existing databases that lack the geo columns
+MIGRATIONS = [
+    "ALTER TABLE comps ADD COLUMN latitude  REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE comps ADD COLUMN longitude REAL NOT NULL DEFAULT 0",
+]
+
+
+# ---------------------------------------------------------------------------
+# Geocoding (OpenStreetMap Nominatim — free, no API key)
+# ---------------------------------------------------------------------------
+
+NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+NOMINATIM_HEADERS = {"User-Agent": "real-estate-ai-agent/1.0 (property comp tool)"}
+
+
+def geocode_address(address: str, city: str = "", state: str = "CO",
+                    zip_code: str = "") -> tuple[float, float] | None:
+    """Geocode a street address using OpenStreetMap Nominatim.
+
+    Returns (latitude, longitude) or None if not found.
+    Rate limit: 1 request/second (Nominatim policy).
+    """
+    parts = [address]
+    if city:
+        parts.append(city)
+    if state:
+        parts.append(state)
+    if zip_code:
+        parts.append(zip_code)
+    query = ", ".join(p for p in parts if p)
+
+    params = urllib.parse.urlencode({
+        "q": query,
+        "format": "jsonv2",
+        "limit": 1,
+        "countrycodes": "us",
+    })
+    url = f"{NOMINATIM_URL}?{params}"
+    req = urllib.request.Request(url, headers=NOMINATIM_HEADERS)
+
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+        if data:
+            return float(data[0]["lat"]), float(data[0]["lon"])
+    except Exception:
+        pass
+    return None
+
+
+def haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Haversine distance between two lat/lon points in miles."""
+    R = 3958.8  # Earth radius in miles
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = (math.sin(dlat / 2) ** 2 +
+         math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) *
+         math.sin(dlon / 2) ** 2)
+    return R * 2 * math.asin(math.sqrt(a))
 
 
 @dataclass
@@ -104,6 +177,8 @@ class CompRow:
     county: str = ""
     zip_code: str = ""
     state: str = "CO"
+    latitude: float = 0.0
+    longitude: float = 0.0
     price: int = 0
     price_per_sqft: float = 0
     beds: int = 0
@@ -145,7 +220,22 @@ class CompsDB:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
+        self._run_migrations()
         self.conn.executescript(SCHEMA)
+        self.conn.commit()
+
+    def _run_migrations(self):
+        """Apply schema migrations for existing databases."""
+        existing_cols = {row[1] for row in
+                        self.conn.execute("PRAGMA table_info(comps)").fetchall()}
+        for sql in MIGRATIONS:
+            # Extract column name from ALTER TABLE ... ADD COLUMN <name> ...
+            col = sql.split("ADD COLUMN")[1].strip().split()[0]
+            if existing_cols and col not in existing_cols:
+                try:
+                    self.conn.execute(sql)
+                except sqlite3.OperationalError:
+                    pass  # column already exists or table doesn't exist yet
         self.conn.commit()
 
     def close(self):
@@ -167,6 +257,7 @@ class CompsDB:
             cur = self.conn.execute("""
                 INSERT OR IGNORE INTO comps (
                     comp_type, address, city, county, zip_code, state,
+                    latitude, longitude,
                     price, price_per_sqft, beds, baths, sqft, lot_sqft, year_built,
                     property_type, listing_url, source, photo_urls, photo_count,
                     sale_date, days_on_market, list_price, sale_to_list,
@@ -174,6 +265,7 @@ class CompsDB:
                     garage, hoa, finish_grade, notes, scraped_at
                 ) VALUES (
                     ?, ?, ?, ?, ?, ?,
+                    ?, ?,
                     ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?,
                     ?, ?, ?, ?,
@@ -183,6 +275,7 @@ class CompsDB:
             """, (
                 comp.comp_type, comp.address, comp.city, comp.county,
                 comp.zip_code, comp.state,
+                comp.latitude, comp.longitude,
                 comp.price, comp.price_per_sqft, comp.beds, comp.baths,
                 comp.sqft, comp.lot_sqft, comp.year_built,
                 comp.property_type, comp.listing_url, comp.source,
@@ -266,6 +359,109 @@ class CompsDB:
         rows = self.conn.execute(sql, params).fetchall()
         return [self._row_to_comp(r) for r in rows]
 
+    def query_nearby(self, lat: float, lng: float, radius_miles: float = 1.0,
+                     comp_type: str | None = None, beds: int | None = None,
+                     min_price: int | None = None, max_price: int | None = None,
+                     limit: int = 50) -> list[tuple[CompRow, float]]:
+        """Find comps within radius_miles of a lat/lng point.
+
+        Returns list of (CompRow, distance_miles) tuples sorted by distance.
+        Uses a bounding box pre-filter then exact Haversine for precision.
+        """
+        # Bounding box pre-filter (rough, fast)
+        lat_delta = radius_miles / 69.0  # ~69 miles per degree latitude
+        lng_delta = radius_miles / (69.0 * math.cos(math.radians(lat)))
+
+        clauses = [
+            "latitude != 0", "longitude != 0",
+            "latitude BETWEEN ? AND ?",
+            "longitude BETWEEN ? AND ?",
+        ]
+        params: list = [
+            lat - lat_delta, lat + lat_delta,
+            lng - lng_delta, lng + lng_delta,
+        ]
+
+        if comp_type:
+            clauses.append("comp_type = ?")
+            params.append(comp_type)
+        if beds is not None:
+            clauses.append("beds = ?")
+            params.append(beds)
+        if min_price is not None:
+            clauses.append("price >= ?")
+            params.append(min_price)
+        if max_price is not None:
+            clauses.append("price <= ?")
+            params.append(max_price)
+
+        where = " AND ".join(clauses)
+        sql = f"SELECT * FROM comps WHERE {where}"
+        rows = self.conn.execute(sql, params).fetchall()
+
+        # Exact Haversine filter and sort
+        results = []
+        for row in rows:
+            comp = self._row_to_comp(row)
+            dist = haversine_miles(lat, lng, comp.latitude, comp.longitude)
+            if dist <= radius_miles:
+                results.append((comp, round(dist, 2)))
+
+        results.sort(key=lambda x: x[1])
+        return results[:limit]
+
+    def geocode_record(self, record_id: int) -> bool:
+        """Geocode a single comp by its ID. Returns True if successful."""
+        row = self.conn.execute(
+            "SELECT id, address, city, state, zip_code FROM comps WHERE id = ?",
+            (record_id,)
+        ).fetchone()
+        if not row:
+            return False
+
+        result = geocode_address(row["address"], row["city"], row["state"], row["zip_code"])
+        if result:
+            lat, lng = result
+            self.conn.execute(
+                "UPDATE comps SET latitude = ?, longitude = ?, updated_at = datetime('now') WHERE id = ?",
+                (lat, lng, record_id),
+            )
+            self.conn.commit()
+            return True
+        return False
+
+    def geocode_missing(self, limit: int = 100, delay: float = 1.1) -> int:
+        """Batch geocode comps that have no lat/lng. Returns count geocoded.
+
+        Respects Nominatim rate limit (1 req/sec) via delay parameter.
+        """
+        rows = self.conn.execute(
+            "SELECT id, address, city, state, zip_code FROM comps "
+            "WHERE (latitude = 0 OR longitude = 0) AND address != '' "
+            "LIMIT ?",
+            (limit,)
+        ).fetchall()
+
+        count = 0
+        for i, row in enumerate(rows):
+            result = geocode_address(row["address"], row["city"], row["state"], row["zip_code"])
+            if result:
+                lat, lng = result
+                self.conn.execute(
+                    "UPDATE comps SET latitude = ?, longitude = ?, updated_at = datetime('now') WHERE id = ?",
+                    (lat, lng, row["id"]),
+                )
+                count += 1
+                print(f"  [{i+1}/{len(rows)}] {row['address']}: {lat:.6f}, {lng:.6f}")
+            else:
+                print(f"  [{i+1}/{len(rows)}] {row['address']}: NOT FOUND")
+
+            if i < len(rows) - 1:
+                time.sleep(delay)
+
+        self.conn.commit()
+        return count
+
     def count(self, comp_type: str | None = None, county: str | None = None) -> int:
         """Count comps matching filters."""
         clauses = []
@@ -312,10 +508,15 @@ class CompsDB:
             ).fetchone()
             avg_rental = int(row[0] or 0)
 
+        geocoded = self.conn.execute(
+            "SELECT COUNT(*) FROM comps WHERE latitude != 0 AND longitude != 0"
+        ).fetchone()[0]
+
         return {
             "total": total,
             "sales": sales,
             "rentals": rentals,
+            "geocoded": geocoded,
             "avg_sale_price": avg_sale,
             "avg_rental_price": avg_rental,
             "by_county": county_counts,
@@ -380,6 +581,7 @@ def print_stats(db: CompsDB):
     print(f"  {'Total records':<30s} {s['total']:,}")
     print(f"  {'Sale comps':<30s} {s['sales']:,}")
     print(f"  {'Rental comps':<30s} {s['rentals']:,}")
+    print(f"  {'Geocoded (lat/lng)':<30s} {s['geocoded']:,}")
     if s["avg_sale_price"]:
         print(f"  {'Avg sale price':<30s} {fmt(s['avg_sale_price'])}")
     if s["avg_rental_price"]:
@@ -418,6 +620,47 @@ def print_query_results(comps: list[CompRow], comp_type: str | None = None):
     print(f"\n  {len(comps)} results")
 
 
+def print_nearby_results(results: list[tuple[CompRow, float]], lat: float, lng: float,
+                         radius: float, comp_type: str | None = None):
+    """Print nearby query results with distance."""
+    if not results:
+        print(f"  No comps found within {radius} miles of ({lat:.4f}, {lng:.4f}).")
+        print(f"  Try: python comps_db.py geocode   (to geocode existing comps first)")
+        return
+
+    is_rental = comp_type == "rental" or results[0][0].comp_type == "rental"
+    price_label = "Rent/mo" if is_rental else "Price"
+
+    print(f"\n  Comps within {radius} mi of ({lat:.4f}, {lng:.4f})")
+    print(f"\n  {'Address':30s} {'Dist':>6s} {price_label:>12s} {'$/sqft':>8s} {'Bed':>4s} {'Sqft':>7s} {'Lat':>10s} {'Lng':>11s}")
+    print(f"  {'-'*30} {'-'*6} {'-'*12} {'-'*8} {'-'*4} {'-'*7} {'-'*10} {'-'*11}")
+    for comp, dist in results:
+        addr = (comp.address[:28] + "..") if len(comp.address) > 30 else comp.address
+        ppsf = f"${comp.price_per_sqft:.2f}" if comp.price_per_sqft else "-"
+        print(f"  {addr:30s} {dist:>5.2f}m {fmt(comp.price):>12s} {ppsf:>8s} {comp.beds:>4d} {comp.sqft:>7,} {comp.latitude:>10.5f} {comp.longitude:>11.5f}")
+
+    print(f"\n  {len(results)} results within {radius} miles")
+
+
+def _parse_near(value: str) -> tuple[float | None, float | None]:
+    """Parse a --near value as 'lat,lng' or geocode an address string."""
+    # Try parsing as lat,lng
+    parts = value.split(",")
+    if len(parts) == 2:
+        try:
+            lat = float(parts[0].strip())
+            lng = float(parts[1].strip())
+            if -90 <= lat <= 90 and -180 <= lng <= 180:
+                return lat, lng
+        except ValueError:
+            pass
+    # Treat as address and geocode
+    result = geocode_address(value)
+    if result:
+        return result
+    return None, None
+
+
 def main():
     parser = argparse.ArgumentParser(description="Comps database CLI")
     sub = parser.add_subparsers(dest="command")
@@ -438,9 +681,22 @@ def main():
     q.add_argument("--source", type=str, default=None)
     q.add_argument("--grade", type=str, default=None)
     q.add_argument("--property-type", type=str, default=None)
+    q.add_argument("--near", type=str, default=None,
+                   help="Lat,lng or address for distance search (e.g. '39.75,-104.99' or '123 Main St, Denver, CO')")
+    q.add_argument("--radius", type=float, default=1.0,
+                   help="Search radius in miles (default: 1.0, used with --near)")
     q.add_argument("--limit", type=int, default=50)
     q.add_argument("--order", type=str, default="price DESC",
                    help="Order by (e.g. 'price DESC', 'sqft ASC')")
+
+    # geocode
+    g = sub.add_parser("geocode", help="Geocode comps that lack lat/lng")
+    g.add_argument("--id", type=int, default=None,
+                   help="Geocode a single comp by ID")
+    g.add_argument("--limit", type=int, default=100,
+                   help="Max comps to geocode in batch (default: 100)")
+    g.add_argument("--delay", type=float, default=1.1,
+                   help="Delay between requests in seconds (default: 1.1)")
 
     # export
     e = sub.add_parser("export", help="Export comps to file")
@@ -460,15 +716,29 @@ def main():
             print_stats(db)
 
         elif args.command == "query":
-            comps = db.query(
-                comp_type=args.type, county=args.county, zip_code=args.zip,
-                beds=args.beds, min_price=args.min_price, max_price=args.max_price,
-                min_sqft=args.min_sqft, max_sqft=args.max_sqft,
-                source=args.source, finish_grade=args.grade,
-                property_type=args.property_type,
-                limit=args.limit, order_by=args.order,
-            )
-            print_query_results(comps, args.type)
+            if args.near:
+                # Parse --near as "lat,lng" or as an address to geocode
+                lat, lng = _parse_near(args.near)
+                if lat is None:
+                    print(f"  Could not resolve location: {args.near}")
+                    return
+                results = db.query_nearby(
+                    lat, lng, radius_miles=args.radius,
+                    comp_type=args.type, beds=args.beds,
+                    min_price=args.min_price, max_price=args.max_price,
+                    limit=args.limit,
+                )
+                print_nearby_results(results, lat, lng, args.radius, args.type)
+            else:
+                comps = db.query(
+                    comp_type=args.type, county=args.county, zip_code=args.zip,
+                    beds=args.beds, min_price=args.min_price, max_price=args.max_price,
+                    min_sqft=args.min_sqft, max_sqft=args.max_sqft,
+                    source=args.source, finish_grade=args.grade,
+                    property_type=args.property_type,
+                    limit=args.limit, order_by=args.order,
+                )
+                print_query_results(comps, args.type)
 
         elif args.command == "export":
             if args.format == "json":
@@ -501,6 +771,26 @@ def main():
                                        if k in CompRow.__dataclass_fields__}))
             count = db.insert_many(comps)
             print(f"  Imported {count} new comps ({len(comps)} total in file)")
+
+        elif args.command == "geocode":
+            if args.id:
+                ok = db.geocode_record(args.id)
+                if ok:
+                    comp = db.query(limit=100000)
+                    match = [c for c in comp if c.id == args.id]
+                    if match:
+                        c = match[0]
+                        print(f"  Geocoded: {c.address} -> ({c.latitude:.6f}, {c.longitude:.6f})")
+                else:
+                    print(f"  Failed to geocode record {args.id}")
+            else:
+                missing = db.conn.execute(
+                    "SELECT COUNT(*) FROM comps WHERE (latitude = 0 OR longitude = 0) AND address != ''"
+                ).fetchone()[0]
+                print(f"\n  {missing} comps need geocoding (limit: {args.limit})")
+                if missing:
+                    count = db.geocode_missing(limit=args.limit, delay=args.delay)
+                    print(f"\n  Geocoded {count} comps successfully")
 
         else:
             parser.print_help()

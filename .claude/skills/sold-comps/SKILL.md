@@ -22,6 +22,12 @@ Ask for (or infer from context):
 python comp_extractor.py --db-query --type sale --county <COUNTY> --beds <N>
 ```
 
+Or search by distance from the subject property:
+```bash
+python comp_extractor.py --db-query --type sale --near "<ADDRESS>" --radius 1.5
+python comp_extractor.py --db-query --type sale --near "39.75,-104.99" --radius 2
+```
+
 If there are existing comps in the database, show them. Ask if the user wants fresh data.
 
 ## Step 2: Generate scraping URLs
@@ -59,6 +65,13 @@ The `--load` command automatically runs comp analysis showing:
 
 Download photos and use the **finish-grade** skill to assess kitchen/bathroom quality for each comp.
 
+## Step 6: Geocode comps (if needed for distance search)
+
+```bash
+python comp_extractor.py --geocode            # batch geocode all missing lat/lng
+python comp_extractor.py --geocode-id <ID>    # geocode one comp
+```
+
 ## After running
 
 Present:
@@ -68,3 +81,4 @@ Present:
 4. How the subject compares (above/below market)
 5. Any notable outliers or patterns
 6. Link to DB for future queries: `python comps_db.py stats`
+7. Suggest distance search: `--near "<address>" --radius 1.5`

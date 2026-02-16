@@ -11,6 +11,10 @@ Usage:
     python comp_extractor.py --type rental --county denver --beds 3
     python comp_extractor.py --load comps.json --type sale --price 625000 --sqft 1800
     python comp_extractor.py --db-query --type sale --county denver --beds 3
+    python comp_extractor.py --db-query --type sale --near "39.75,-104.99" --radius 2
+    python comp_extractor.py --db-query --near "123 Main St, Denver, CO" --radius 1.5
+    python comp_extractor.py --geocode
+    python comp_extractor.py --geocode-id 5
     python comp_extractor.py --help
 """
 
@@ -86,11 +90,13 @@ COUNTY_SEARCH_PARAMS = {
 
 @dataclass
 class CompRecord:
-    """A single comparable sale."""
+    """A single comparable sale or rental."""
     address: str = ""
     city: str = ""
     county: str = ""
     zip_code: str = ""
+    latitude: float = 0.0
+    longitude: float = 0.0
     sale_price: int = 0
     sale_date: str = ""
     beds: int = 0
@@ -430,6 +436,8 @@ def comps_to_db_rows(comps: list[CompRecord], comp_type: str = "sale"):
             city=c.city,
             county=c.county,
             zip_code=c.zip_code,
+            latitude=c.latitude,
+            longitude=c.longitude,
             price=c.sale_price,
             price_per_sqft=c.price_per_sqft,
             beds=c.beds,
@@ -489,6 +497,14 @@ def main():
                         help="Query existing comps from the database")
     parser.add_argument("--db-stats", action="store_true",
                         help="Show database statistics")
+    parser.add_argument("--near", type=str, default=None,
+                        help="Distance search: 'lat,lng' or address (use with --db-query)")
+    parser.add_argument("--radius", type=float, default=1.0,
+                        help="Search radius in miles (default: 1.0, used with --near)")
+    parser.add_argument("--geocode", action="store_true",
+                        help="Batch geocode comps that lack lat/lng")
+    parser.add_argument("--geocode-id", type=int, default=None,
+                        help="Geocode a single comp by database ID")
 
     args = parser.parse_args()
 
@@ -499,15 +515,51 @@ def main():
             print_stats(db)
         return
 
-    # DB query
-    if args.db_query:
-        from comps_db import CompsDB, print_query_results
+    # Geocode commands
+    if args.geocode or args.geocode_id is not None:
+        from comps_db import CompsDB
         with CompsDB() as db:
-            comps = db.query(
-                comp_type=args.type, county=args.county,
-                beds=args.beds, limit=50,
-            )
-            print_query_results(comps, args.type)
+            if args.geocode_id is not None:
+                ok = db.geocode_record(args.geocode_id)
+                if ok:
+                    rows = db.query(limit=100000)
+                    match = [c for c in rows if c.id == args.geocode_id]
+                    if match:
+                        c = match[0]
+                        print(f"  Geocoded: {c.address} -> ({c.latitude:.6f}, {c.longitude:.6f})")
+                else:
+                    print(f"  Failed to geocode record {args.geocode_id}")
+            else:
+                missing = db.conn.execute(
+                    "SELECT COUNT(*) FROM comps WHERE (latitude = 0 OR longitude = 0) AND address != ''"
+                ).fetchone()[0]
+                print(f"\n  {missing} comps need geocoding")
+                if missing:
+                    count = db.geocode_missing(limit=100)
+                    print(f"\n  Geocoded {count} comps successfully")
+        return
+
+    # DB query (with optional --near distance search)
+    if args.db_query:
+        from comps_db import CompsDB, print_query_results, print_nearby_results, _parse_near
+        with CompsDB() as db:
+            if args.near:
+                lat, lng = _parse_near(args.near)
+                if lat is None:
+                    print(f"  Could not resolve location: {args.near}")
+                    return
+                results = db.query_nearby(
+                    lat, lng, radius_miles=args.radius,
+                    comp_type=args.type, beds=args.beds,
+                    limit=50,
+                )
+                print_nearby_results(results, lat, lng, args.radius, args.type)
+            else:
+                comps = db.query(
+                    comp_type=args.type, county=args.county,
+                    beds=args.beds, limit=50,
+                )
+                print_query_results(comps, args.type)
         return
 
     # Load from JSON, analyze, and save to DB
