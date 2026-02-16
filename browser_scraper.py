@@ -35,9 +35,9 @@ def _ensure_imports():
     global _pw, _stealth
     if _pw is None:
         from playwright.sync_api import sync_playwright
-        from playwright_stealth import stealth_sync
+        from playwright_stealth import Stealth
         _pw = sync_playwright
-        _stealth = stealth_sync
+        _stealth = Stealth()
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +88,7 @@ class StealthBrowser:
         cfg = self.config
         ua = cfg.user_agent or random.choice(USER_AGENTS)
 
-        self._pw_ctx = _pw()
+        self._pw_ctx = _stealth.use_sync(_pw())
         pw = self._pw_ctx.__enter__()
 
         self._browser = pw.chromium.launch(
@@ -122,9 +122,8 @@ class StealthBrowser:
         )
 
     def new_page(self):
-        """Create a new stealth page."""
+        """Create a new stealth page (stealth already applied via context)."""
         page = self._context.new_page()
-        _stealth(page)
         page.set_default_timeout(self.config.timeout)
         return page
 
@@ -570,6 +569,20 @@ def scrape_urls(urls: list[dict], config: BrowserConfig | None = None,
                 fetch_photos: bool = False) -> list[ScrapedListing]:
     """Scrape multiple search URLs and return all extracted listings."""
     cfg = config or BrowserConfig()
+    all_listings = []
+
+    try:
+        return _scrape_urls_inner(urls, cfg, fetch_photos)
+    except Exception as e:
+        if "Executable doesn't exist" in str(e) or "playwright install" in str(e).lower():
+            print("\n  ERROR: Chromium browser not installed.")
+            print("  Run this once to set it up:\n")
+            print("    uv run playwright install chromium\n")
+            return []
+        raise
+
+
+def _scrape_urls_inner(urls, cfg, fetch_photos):
     all_listings = []
 
     with StealthBrowser(cfg) as browser:
