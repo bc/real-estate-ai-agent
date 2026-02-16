@@ -12,7 +12,7 @@ Estimate residential property tax for Adams County, Colorado.
 Run the property tax estimator module for Adams County:
 
 ```bash
-python property_tax_estimator.py --county adams --value <MARKET_VALUE>
+uv run property-tax --county adams --value <MARKET_VALUE>
 ```
 
 Replace `<MARKET_VALUE>` with the property's market value in dollars. Ask the user for this value if not provided.
@@ -29,7 +29,7 @@ Replace `<MARKET_VALUE>` with the property's market value in dollars. Ask the us
 If the user has specific mill levy numbers from their tax bill:
 
 ```bash
-python property_tax_estimator.py --county adams --value <VALUE> --school-mills <SCHOOL> --local-mills <LOCAL>
+uv run property-tax --county adams --value <VALUE> --school-mills <SCHOOL> --local-mills <LOCAL>
 ```
 
 ## Look up actual tax records
@@ -42,7 +42,7 @@ Direct the user to these official Adams County sites:
 ## Compare with neighboring counties
 
 ```bash
-python property_tax_estimator.py --all --value <MARKET_VALUE>
+uv run property-tax --all --value <MARKET_VALUE>
 ```
 
 ## After running

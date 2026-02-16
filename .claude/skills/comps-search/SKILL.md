@@ -15,12 +15,12 @@ This is a shared workflow for both sale comps and rental comps. It handles:
 
 For **sale** comps (recently sold):
 ```bash
-python comp_extractor.py --type sale --county <COUNTY> --beds <N> --price <N>
+uv run comp-extractor --type sale --county <COUNTY> --beds <N> --price <N>
 ```
 
 For **rental** comps:
 ```bash
-python comp_extractor.py --type rental --county <COUNTY> --beds <N>
+uv run comp-extractor --type rental --county <COUNTY> --beds <N>
 ```
 
 ## Step 2: Scrape listings
@@ -65,15 +65,15 @@ Create JSON with an array of objects. For sale comps:
 ]
 ```
 
-Include `latitude` and `longitude` if available from the listing. If not, they can be geocoded later with `python comp_extractor.py --geocode`.
+Include `latitude` and `longitude` if available from the listing. If not, they can be geocoded later with `uv run comp-extractor --geocode`.
 
 For rental comps, use the same format but `sale_price` = monthly rent.
 
 ## Step 4: Save to database
 
 ```bash
-python comp_extractor.py --load comps.json --type sale --price 625000 --sqft 1800
-python comp_extractor.py --load comps.json --type rental --price 3000 --sqft 1600
+uv run comp-extractor --load comps.json --type sale --price 625000 --sqft 1800
+uv run comp-extractor --load comps.json --type rental --price 3000 --sqft 1600
 ```
 
 This saves to `data/comps.db` and shows an analysis.
@@ -99,33 +99,33 @@ Then use the **finish-grade** skill to view and grade kitchen/bathroom photos.
 
 After saving, geocode comps for distance searching:
 ```bash
-python comp_extractor.py --geocode            # batch geocode all missing
-python comp_extractor.py --geocode-id <ID>    # geocode a single comp
-python comps_db.py geocode                    # via DB CLI
+uv run comp-extractor --geocode            # batch geocode all missing
+uv run comp-extractor --geocode-id <ID>    # geocode a single comp
+uv run comps-db geocode                    # via DB CLI
 ```
 
 ## Step 7: Query saved comps
 
 By county/beds:
 ```bash
-python comp_extractor.py --db-query --type sale --county denver --beds 3
-python comp_extractor.py --db-query --type rental --county denver --beds 3
-python comp_extractor.py --db-stats
+uv run comp-extractor --db-query --type sale --county denver --beds 3
+uv run comp-extractor --db-query --type rental --county denver --beds 3
+uv run comp-extractor --db-stats
 ```
 
 By distance (requires geocoded comps):
 ```bash
-python comp_extractor.py --db-query --type sale --near "123 Main St, Denver, CO" --radius 1.5
-python comp_extractor.py --db-query --type sale --near "39.75,-104.99" --radius 2
-python comps_db.py query --type sale --near "39.75,-104.99" --radius 2
+uv run comp-extractor --db-query --type sale --near "123 Main St, Denver, CO" --radius 1.5
+uv run comp-extractor --db-query --type sale --near "39.75,-104.99" --radius 2
+uv run comps-db query --type sale --near "39.75,-104.99" --radius 2
 ```
 
 Full DB CLI:
 ```bash
-python comps_db.py query --type sale --county denver --beds 3 --min-price 500000
-python comps_db.py query --type rental --county denver --beds 3 --max-price 3500
-python comps_db.py stats
-python comps_db.py export --type sale --format csv --output sale_comps.csv
+uv run comps-db query --type sale --county denver --beds 3 --min-price 500000
+uv run comps-db query --type rental --county denver --beds 3 --max-price 3500
+uv run comps-db stats
+uv run comps-db export --type sale --format csv --output sale_comps.csv
 ```
 
 ## Database schema

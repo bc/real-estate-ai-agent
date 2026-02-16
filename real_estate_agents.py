@@ -90,7 +90,7 @@ def scrape_property_data():
         )
         return crew.kickoff()
 
-if __name__ == "__main__":
+def main():
     try:
         result = scrape_property_data()
         print("\n[SUCCESS] Scraping completed!")
@@ -98,3 +98,7 @@ if __name__ == "__main__":
         print(result)
     except Exception as e:
         print(f"\n[ERROR] Scraping failed: {str(e)}")
+
+
+if __name__ == "__main__":
+    main()

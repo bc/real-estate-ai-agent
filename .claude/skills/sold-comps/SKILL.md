@@ -19,13 +19,13 @@ Ask for (or infer from context):
 ## Step 1: Check the database first
 
 ```bash
-python comp_extractor.py --db-query --type sale --county <COUNTY> --beds <N>
+uv run comp-extractor --db-query --type sale --county <COUNTY> --beds <N>
 ```
 
 Or search by distance from the subject property:
 ```bash
-python comp_extractor.py --db-query --type sale --near "<ADDRESS>" --radius 1.5
-python comp_extractor.py --db-query --type sale --near "39.75,-104.99" --radius 2
+uv run comp-extractor --db-query --type sale --near "<ADDRESS>" --radius 1.5
+uv run comp-extractor --db-query --type sale --near "39.75,-104.99" --radius 2
 ```
 
 If there are existing comps in the database, show them. Ask if the user wants fresh data.
@@ -33,7 +33,7 @@ If there are existing comps in the database, show them. Ask if the user wants fr
 ## Step 2: Generate scraping URLs
 
 ```bash
-python comp_extractor.py --type sale --county <COUNTY> --beds <N> --price <N>
+uv run comp-extractor --type sale --county <COUNTY> --beds <N> --price <N>
 ```
 
 This generates URLs for:
@@ -50,7 +50,7 @@ Follow the **comps-search** sub-skill workflow:
 3. Extract photo URLs
 4. Save to JSON, then load into DB:
    ```bash
-   python comp_extractor.py --load comps.json --type sale --price <SUBJECT_PRICE> --sqft <SUBJECT_SQFT>
+   uv run comp-extractor --load comps.json --type sale --price <SUBJECT_PRICE> --sqft <SUBJECT_SQFT>
    ```
 
 ## Step 4: Analyze
@@ -68,8 +68,8 @@ Download photos and use the **finish-grade** skill to assess kitchen/bathroom qu
 ## Step 6: Geocode comps (if needed for distance search)
 
 ```bash
-python comp_extractor.py --geocode            # batch geocode all missing lat/lng
-python comp_extractor.py --geocode-id <ID>    # geocode one comp
+uv run comp-extractor --geocode            # batch geocode all missing lat/lng
+uv run comp-extractor --geocode-id <ID>    # geocode one comp
 ```
 
 ## After running
@@ -80,5 +80,5 @@ Present:
 3. Suggested value range for the subject property
 4. How the subject compares (above/below market)
 5. Any notable outliers or patterns
-6. Link to DB for future queries: `python comps_db.py stats`
+6. Link to DB for future queries: `uv run comps-db stats`
 7. Suggest distance search: `--near "<address>" --radius 1.5`

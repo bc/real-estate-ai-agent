@@ -12,7 +12,7 @@ Estimate residential property tax for Douglas County, Colorado.
 Run the property tax estimator module for Douglas County:
 
 ```bash
-python property_tax_estimator.py --county douglas --value <MARKET_VALUE>
+uv run property-tax --county douglas --value <MARKET_VALUE>
 ```
 
 Replace `<MARKET_VALUE>` with the property's market value in dollars. Ask the user for this value if not provided.
@@ -29,7 +29,7 @@ Replace `<MARKET_VALUE>` with the property's market value in dollars. Ask the us
 If the user has specific mill levy numbers or is in a metro district:
 
 ```bash
-python property_tax_estimator.py --county douglas --value <VALUE> --school-mills <SCHOOL> --local-mills <LOCAL>
+uv run property-tax --county douglas --value <VALUE> --school-mills <SCHOOL> --local-mills <LOCAL>
 ```
 
 ## Look up actual tax records
@@ -42,7 +42,7 @@ Direct the user to these official Douglas County sites:
 ## Compare with neighboring counties
 
 ```bash
-python property_tax_estimator.py --all --value <MARKET_VALUE>
+uv run property-tax --all --value <MARKET_VALUE>
 ```
 
 ## After running

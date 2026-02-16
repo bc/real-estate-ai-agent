@@ -33,7 +33,7 @@ Assess kitchen and bathroom finish quality on an A-F scale from listing photos.
 
 1. Scan the directory:
    ```bash
-   python finish_grader.py --photos-dir ./listing_photos --workflow
+   uv run finish-grader --photos-dir ./listing_photos --workflow
    ```
 2. This identifies kitchen/bathroom photos by filename
 
@@ -77,12 +77,12 @@ Kitchen is weighted 60%, bathroom 40%.
 
 Use the overall grade with the rent estimator:
 ```bash
-python rent_estimator.py --county denver --beds 3 --sqft 1800 --grade <OVERALL_GRADE>
+uv run rent-estimator --county denver --beds 3 --sqft 1800 --grade <OVERALL_GRADE>
 ```
 
 ## Quick reference
 
 Print the full rubric:
 ```bash
-python finish_grader.py --rubric
+uv run finish-grader --rubric
 ```

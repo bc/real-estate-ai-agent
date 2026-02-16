@@ -2,32 +2,52 @@
 
 ## Project Overview
 
-Real Estate AI Agent System — a Python CLI tool that uses CrewAI agents and Bright Data's MCP server to extract structured property data from real estate listing websites (Zillow, Realtor.com, Redfin). It outputs strict snake_case JSON with property details.
-
-This is a single-script application with no web server, no database, and no API. It runs as a batch process.
+Real Estate AI Agent System — a Python toolkit for Denver metro real estate investment analysis. Includes property scraping via CrewAI + Bright Data MCP, comparable property database (SQLite), tax estimation, rent estimation, finish quality grading, and appreciation tracking.
 
 ## Repository Structure
 
 ```
 real-estate-ai-agent/
-├── real_estate_agents.py   # Entire application logic (single entry point)
-├── pyproject.toml           # Project metadata and Python version constraint
-├── README.md                # User-facing documentation
-└── .env                     # Required: API keys (not committed)
+├── real_estate_agents.py       # CrewAI scraper agent (Bright Data MCP)
+├── refinance_analyzer.py       # Mortgage refinancing tradeoff analysis
+├── property_tax_estimator.py   # Property tax estimation (5 Denver metro counties)
+├── rent_estimator.py           # Rent estimation with grade adjustments
+├── comp_extractor.py           # Comp search URLs, scraping helpers, DB bridge
+├── comps_db.py                 # SQLite database for all comps + geocoding
+├── finish_grader.py            # Kitchen/bathroom finish quality grading (A-F)
+├── appreciation_tracker.py     # Zillow ZHVI data sync + zip-code appreciation
+├── pyproject.toml              # uv project config with dependencies + entry points
+├── uv.lock                     # Locked dependency versions
+├── CLAUDE.md                   # This file
+├── README.md                   # User-facing documentation
+├── .gitignore                  # Ignores .env, .venv, data/, photos, pycache
+├── .env                        # Required: API keys (not committed)
+└── .claude/skills/             # Claude Code skills for guided workflows
+    ├── comps/                  # Sale + rental comp routing
+    ├── sold-comps/             # Recently sold comp workflow
+    ├── comps-search/           # Shared scrape-and-store pipeline
+    ├── rent-estimate/          # Rent estimation workflow
+    ├── finish-grade/           # Photo-based finish quality grading
+    ├── appreciation/           # Zip-code appreciation lookup
+    ├── denver-tax/             # Denver County property tax
+    ├── douglas-tax/            # Douglas County property tax
+    ├── adams-tax/              # Adams County property tax
+    ├── arapahoe-tax/           # Arapahoe County property tax
+    └── jefferson-tax/          # Jefferson County property tax
 ```
-
-There are no subdirectories, test files, or configuration for linting/CI.
 
 ## Tech Stack
 
-- **Language:** Python 3.9 (exact version constraint in pyproject.toml: `== 3.9.*`)
+- **Language:** Python 3.10+ (all modules use stdlib except real_estate_agents.py)
+- **Package manager:** uv — `uv sync` to install, `uv run <command>` to execute
 - **Agent framework:** CrewAI (orchestrates AI agents with tools)
 - **MCP integration:** `crewai-tools[mcp]` + `mcp` (Model Context Protocol for Bright Data)
 - **LLM:** Nebius Qwen (`nebius/Qwen/Qwen3-235B-A22B`) via CrewAI's LLM wrapper
 - **Web scraping infrastructure:** Bright Data MCP server (`@brightdata/mcp` npm package)
+- **Database:** SQLite (comps.db in data/ directory, WAL mode)
+- **Geocoding:** OpenStreetMap Nominatim (free, no API key)
 - **Data handling:** pandas, json (stdlib)
 - **Environment management:** python-dotenv
-- **Package manager:** uv (configured in pyproject.toml)
 
 ## Required Environment Variables
 
@@ -45,50 +65,38 @@ A `.env` file is required at the project root with these keys:
 ## How to Run
 
 ### Prerequisites
-- Python 3.9+
-- Node.js + npm (required for the Bright Data MCP server spawned via `npx`)
+- Python 3.10+
+- uv (`pip install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`)
+- Node.js + npm (required for Bright Data MCP server via `npx`)
 - Valid API credentials in `.env`
 
 ### Setup
 ```sh
-python3.9 -m venv venv
-source venv/bin/activate          # macOS/Linux
-pip install "crewai-tools[mcp]" crewai mcp python-dotenv pandas
+uv sync
 ```
 
-### Execute
+### Available Commands
+
+All tools are available via `uv run`:
+
 ```sh
-python real_estate_agents.py
+uv run real-estate-agents                    # Run the CrewAI scraper
+uv run refinance-analyzer --help             # Mortgage refinancing analysis
+uv run property-tax --county denver --value 625000  # Property tax estimate
+uv run rent-estimator --county denver --beds 3      # Rent estimate
+uv run comp-extractor --type sale --county denver    # Comp search URLs
+uv run comp-extractor --db-query --type sale --near "39.75,-104.99" --radius 2
+uv run comp-extractor --geocode              # Batch geocode comps
+uv run comps-db stats                        # Database overview
+uv run comps-db query --type sale --county denver --beds 3
+uv run finish-grader --rubric                # Finish quality rubric
+uv run appreciation-tracker --county denver  # Appreciation by county
 ```
 
-Output is printed to stdout as JSON on success, or an error message on failure.
+### Adding Dependencies
 
-## Architecture & Code Flow
-
-The application follows a linear CrewAI agent pipeline in `real_estate_agents.py`:
-
-1. **Initialization (lines 1-12):** Import dependencies, load `.env` variables.
-2. **LLM setup (lines 15-19):** Configure Nebius Qwen LLM with API key.
-3. **MCP server config (lines 22-30):** Define Bright Data MCP server parameters (spawned as a child process via `npx`).
-4. **`build_scraper_agent()` (lines 32-51):** Creates a CrewAI Agent with role "Senior Real Estate Data Extractor", MCP tools, and max 3 iterations.
-5. **`build_scraping_task()` (lines 53-76):** Defines the scraping task with a target URL and expected JSON output schema.
-6. **`scrape_property_data()` (lines 79-91):** Assembles the Crew (sequential process) and kicks off execution.
-7. **`__main__` block (lines 93-100):** Entry point with try/except error handling.
-
-### Key Patterns
-- **Single-agent crew:** Only one agent (`scraper_agent`) and one task (`scraping_task`).
-- **MCP context manager:** `MCPServerAdapter(server_params)` is used as a context manager that starts/stops the Bright Data MCP server subprocess.
-- **Sequential process:** `Process.sequential` (only one task, so order is trivial).
-- **Hardcoded target URL:** The Zillow URL in `build_scraping_task()` is hardcoded — modify it to scrape a different listing.
-
-## Output Schema
-
-The agent returns JSON with these snake_case keys:
-
-```
-address, price, bedrooms, bathrooms, square_feet, lot_size,
-year_built, property_type, listing_agent, days_on_market,
-mls_number, description, image_urls, neighborhood
+```sh
+uv add <package-name>
 ```
 
 ## Development Conventions
@@ -101,22 +109,15 @@ mls_number, description, image_urls, neighborhood
   - Inline comments are minimal; docstrings are brief
 
 ### Dependencies
-- Managed via `pip install` directly (not locked). `pyproject.toml` lists them as a comment only.
-- The `[tool.uv]` section in `pyproject.toml` is a placeholder — uv-specific config is not actively used.
+- Managed via uv. `pyproject.toml` declares dependencies; `uv.lock` pins exact versions.
+- Most modules (all except `real_estate_agents.py`) use only Python stdlib.
 
 ### No Tests
 - There are no tests, no test framework, and no CI/CD pipeline.
-- If adding tests, `pytest` would be the conventional choice for a Python project of this type.
+- If adding tests, `pytest` would be the conventional choice.
 
 ### No Docker
-- No containerization is set up. The app requires Python 3.9+ and Node.js installed locally.
-
-## Common Modifications
-
-- **Change target URL:** Edit the URL string in `build_scraping_task()` at line 56.
-- **Add output fields:** Update the `goal` string in `build_scraper_agent()` and the `expected_output` in `build_scraping_task()`.
-- **Switch LLM:** Change the `model` parameter in the `LLM()` constructor at line 17.
-- **Increase agent iterations:** Adjust `max_iter` in `build_scraper_agent()` at line 49.
+- No containerization is set up.
 
 ## Security Notes
 
