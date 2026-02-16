@@ -1,70 +1,62 @@
 ---
 name: comps
-description: Find comparable sales (comps) for a property in the Denver metro area. Use when the user asks about comps, comparable sales, recently sold properties, neighborhood sales data, or property valuation from Redfin/Zillow/Trulia.
+description: Find comparable properties (sales or rentals) in the Denver metro area. Use when the user asks about comps, comparable sales, recently sold properties, rental comps, neighborhood data, or property valuation from Redfin/Zillow/Trulia. Routes to sold-comps or rental comps as needed.
 ---
 
-# Comparable Sales Extractor
+# Comps — Sales & Rental Comparable Properties
 
-Find and analyze recently sold comparable properties from Redfin, Zillow, Trulia, and Realtor.com.
+This skill handles both **sale comps** (recently sold) and **rental comps** (active/recent rentals). All comps are stored in a shared SQLite database at `data/comps.db`.
 
-## Gather info from user
+## Determine comp type
 
-Ask the user for (or infer from context):
-- County (denver, douglas, adams, arapahoe, jefferson)
-- Bedrooms
-- Square footage
-- Target price or current value
-- Address (optional, for reference)
+Ask the user or infer from context:
+- **Sale comps**: "what did houses sell for", "recently sold", "value my property"
+- **Rental comps**: "what would this rent for", "rental comps", "comparable rents"
 
-## Step 1: Generate scraping URLs
+## For sale comps
+
+Use the **sold-comps** skill, or run directly:
+```bash
+python comp_extractor.py --type sale --county <COUNTY> --beds <N> --price <N>
+```
+
+## For rental comps
 
 ```bash
-python comp_extractor.py --county <COUNTY> --beds <N> --sqft <N> --price <N>
+python comp_extractor.py --type rental --county <COUNTY> --beds <N>
 ```
 
-This prints URLs for Zillow, Redfin, Trulia, and Realtor.com filtered to recently sold properties matching the criteria.
+## Check existing database first
 
-## Step 2: Scrape the listings
-
-For each URL generated:
-1. Use WebFetch to load the page
-2. Extract listing data: address, sold price, beds, baths, sqft, sold date, price per sqft
-3. Extract ALL photo URLs from each listing
-
-## Step 3: Download photos
-
-Use the download functions or Bash curl to save listing photos:
-```python
-from comp_extractor import download_comp_photos, CompRecord
-comp = CompRecord(address="123 Main St", photo_urls=["https://..."])
-paths = download_comp_photos(comp)
-```
-
-Or via Bash:
 ```bash
-mkdir -p comp_photos/123_Main_St
-curl -o comp_photos/123_Main_St/photo_001.jpg "https://photo-url..."
+python comp_extractor.py --db-query --type sale --county <COUNTY> --beds <N>
+python comp_extractor.py --db-query --type rental --county <COUNTY> --beds <N>
+python comp_extractor.py --db-stats
 ```
 
-## Step 4: Analyze comps
+## Full database CLI
 
-Save scraped comps to JSON and analyze:
 ```bash
-python comp_extractor.py --load comps.json --price <SUBJECT_PRICE> --sqft <SUBJECT_SQFT>
+python comps_db.py stats                                          # overview
+python comps_db.py query --type sale --county denver --beds 3     # filter
+python comps_db.py query --type rental --min-price 2000           # by rent
+python comps_db.py export --type sale --format csv -o comps.csv   # export
+python comps_db.py import --file scraped.json --type sale         # import
 ```
 
-Or programmatically:
-```python
-from comp_extractor import CompRecord, analyze_comps, print_comp_analysis
-comps = [CompRecord(address="...", sale_price=600000, sqft=1800, ...)]
-analysis = analyze_comps(subject_price=625000, subject_sqft=1600, comps=comps)
-print_comp_analysis(analysis, comps)
-```
+## Scraping workflow
 
-## Step 5: Grade the finish quality
-
-For each comp's kitchen/bathroom photos, use the finish-grade skill to assess quality.
+Follow the **comps-search** sub-skill for the full scrape-and-store pipeline:
+1. Generate URLs for sale or rental
+2. Scrape with WebFetch / Bright Data MCP
+3. Extract listing data + all photo URLs
+4. Save to JSON -> load into DB
+5. Download photos -> finish-grade for kitchen/bathroom quality
 
 ## After running
 
-Present: comp count, average/median price, price per sqft, suggested value range, and individual comp details. Highlight how the subject compares to the market.
+Present comp analysis and remind user:
+- Comps are saved in `data/comps.db` for future queries
+- Use `--db-query` to search without re-scraping
+- Connect to rent_estimator.py for income projections
+- Connect to refinance_analyzer.py for cash flow modeling

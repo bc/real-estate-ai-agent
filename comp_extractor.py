@@ -1,14 +1,16 @@
 """
-Comparable sales (comps) extractor for Denver metro area.
+Comparable property extractor for Denver metro area.
 
-Generates scraping URLs and structures for extracting recently sold
-comparable properties from Redfin, Zillow, and Trulia. Also provides
-analysis functions for comparing comps to a subject property.
+Generates scraping URLs and structures for extracting recently sold AND
+rental comparable properties from Redfin, Zillow, Trulia, and more.
+All scraped comps are stored in a shared SQLite database (data/comps.db)
+via the comps_db module.
 
 Usage:
-    python comp_extractor.py --county denver --beds 3 --baths 2 --sqft 1800 --price 625000
-    python comp_extractor.py --county douglas --beds 4 --sqft 2400 --radius 2
-    python comp_extractor.py --address "1234 Main St, Denver, CO 80202" --beds 3
+    python comp_extractor.py --type sale --county denver --beds 3 --price 625000
+    python comp_extractor.py --type rental --county denver --beds 3
+    python comp_extractor.py --load comps.json --type sale --price 625000 --sqft 1800
+    python comp_extractor.py --db-query --type sale --county denver --beds 3
     python comp_extractor.py --help
 """
 
@@ -222,20 +224,82 @@ def generate_comp_urls(county_key: str, beds: int, price: int | None = None,
     return urls
 
 
+def generate_rental_comp_urls(county_key: str, beds: int,
+                               max_rent: int | None = None) -> list[dict]:
+    """Generate URLs for scraping rental comps."""
+    params = COUNTY_SEARCH_PARAMS.get(county_key, COUNTY_SEARCH_PARAMS["denver"])
+    urls = []
+
+    zillow_slug = params["zillow_slug"]
+    trulia_slug = params["trulia_slug"]
+
+    urls.append({
+        "site": "Zillow (Rentals)",
+        "url": f"https://www.zillow.com/{zillow_slug}/rentals/{beds}-_beds/",
+        "scrape_target": "Rental listing cards: address, rent/mo, beds, baths, sqft",
+        "photo_access": "Click listing -> Photos tab -> scrape img src URLs",
+        "notes": "Best for SFH rentals. Filter by price and type.",
+    })
+    urls.append({
+        "site": "Trulia (Rentals)",
+        "url": f"https://www.trulia.com/for_rent/{trulia_slug}/{beds}p_beds/",
+        "scrape_target": "Cards: address, rent, beds, baths, sqft, days listed",
+        "photo_access": "Click listing for photo carousel.",
+        "notes": "Same data as Zillow. Neighborhood insight overlays.",
+    })
+
+    # Apartments.com city slug mapping
+    apt_slugs = {
+        "denver": "denver-co", "douglas": "castle-rock-co",
+        "adams": "thornton-co", "arapahoe": "centennial-co",
+        "jefferson": "lakewood-co",
+    }
+    apt_slug = apt_slugs.get(county_key, "denver-co")
+    urls.append({
+        "site": "Apartments.com (Houses)",
+        "url": f"https://www.apartments.com/houses/{apt_slug}/{beds}-bedrooms/",
+        "scrape_target": "Listing cards: address, rent, beds, baths, sqft",
+        "photo_access": "Click listing -> photo gallery.",
+        "notes": "Good for rent trend charts. Also lists SFH.",
+    })
+    urls.append({
+        "site": "Craigslist Denver",
+        "url": f"https://denver.craigslist.org/search/apa?min_bedrooms={beds}&max_bedrooms={beds}",
+        "scrape_target": "Post titles with price, location, beds, sqft",
+        "photo_access": "Click post for photos.",
+        "notes": "Private landlord pricing. Market floor indicator.",
+    })
+    urls.append({
+        "site": "Rentometer",
+        "url": "https://www.rentometer.com/",
+        "scrape_target": "Enter address for free estimate",
+        "photo_access": "N/A",
+        "notes": "1 free lookup/day. Quick median rent + range.",
+    })
+
+    return urls
+
+
 def fmt(val) -> str:
     return f"${val:,}"
 
 
-def print_comp_urls(county_key: str, beds: int, price: int | None):
+def print_comp_urls(county_key: str, beds: int, price: int | None,
+                    comp_type: str = "sale"):
     """Print comp scraping URLs with instructions."""
     county_name = COUNTY_SEARCH_PARAMS[county_key].get("trulia_slug", county_key).replace("_", " ")
+    type_label = "RECENTLY SOLD" if comp_type == "sale" else "RENTAL"
     print(f"\n{'=' * 76}")
-    print(f"  COMP SEARCH URLS — {county_name} — {beds}BR")
-    if price:
+    print(f"  {type_label} COMP URLS — {county_name} — {beds}BR")
+    if price and comp_type == "sale":
         print(f"  Price range: {fmt(int(price * 0.75))} — {fmt(int(price * 1.25))}")
     print(f"{'=' * 76}\n")
 
-    urls = generate_comp_urls(county_key, beds, price)
+    if comp_type == "rental":
+        urls = generate_rental_comp_urls(county_key, beds, price)
+    else:
+        urls = generate_comp_urls(county_key, beds, price)
+
     for u in urls:
         print(f"  {u['site']}")
         print(f"    URL:    {u['url']}")
@@ -244,13 +308,14 @@ def print_comp_urls(county_key: str, beds: int, price: int | None):
         print(f"    Notes:  {u['notes']}")
         print()
 
+    price_field = "rent" if comp_type == "rental" else "sale_price"
     print(f"  --- Scraping Instructions ---")
     print(f"  1. Use WebFetch or Bright Data MCP to load each URL above")
     print(f"  2. Extract listing data into CompRecord objects:")
-    print(f"     address, sale_price, beds, baths, sqft, sale_date, price_per_sqft")
+    print(f"     address, {price_field}, beds, baths, sqft, price_per_sqft")
     print(f"  3. For each listing, grab ALL photo URLs (img src / data-src)")
     print(f"  4. Download photos locally, then use Read tool to view kitchen/bath images")
-    print(f"  5. Run analyze_comps() to get valuation range")
+    print(f"  5. Save to DB: python comp_extractor.py --load comps.json --type {comp_type}")
     print(f"\n  --- Photo Extraction Tip ---")
     print(f"  Listing photo URLs typically follow patterns like:")
     print(f"    Zillow:  photos.zillowstatic.com/fp/<id>-uncropped_scaled_within_1536_1152.webp")
@@ -354,11 +419,56 @@ def download_comp_photos(comp: CompRecord, base_dir: str = "comp_photos") -> lis
     return paths
 
 
+def comps_to_db_rows(comps: list[CompRecord], comp_type: str = "sale"):
+    """Convert CompRecord list to CompRow list for database storage."""
+    from comps_db import CompRow
+    rows = []
+    for c in comps:
+        rows.append(CompRow(
+            comp_type=comp_type,
+            address=c.address,
+            city=c.city,
+            county=c.county,
+            zip_code=c.zip_code,
+            price=c.sale_price,
+            price_per_sqft=c.price_per_sqft,
+            beds=c.beds,
+            baths=c.baths,
+            sqft=c.sqft,
+            lot_sqft=c.lot_sqft,
+            year_built=c.year_built,
+            property_type=c.property_type,
+            listing_url=c.listing_url,
+            source=c.source,
+            photo_urls=c.photo_urls,
+            photo_count=len(c.photo_urls),
+            sale_date=c.sale_date,
+            days_on_market=c.days_on_market,
+            garage=c.garage,
+            hoa=c.hoa,
+            notes=c.notes,
+        ))
+    return rows
+
+
+def save_comps_to_db(comps: list[CompRecord], comp_type: str = "sale") -> int:
+    """Save CompRecords to the SQLite database. Returns count inserted."""
+    from comps_db import CompsDB
+    rows = comps_to_db_rows(comps, comp_type)
+    with CompsDB() as db:
+        count = db.insert_many(rows)
+        total = db.count(comp_type)
+    print(f"  Saved {count} new {comp_type} comps to database ({total} total {comp_type} comps)")
+    return count
+
+
 def main():
     county_choices = list(COUNTY_SEARCH_PARAMS.keys())
     parser = argparse.ArgumentParser(
-        description="Extract and analyze comparable sales for Denver metro properties"
+        description="Extract and analyze comparable properties for Denver metro"
     )
+    parser.add_argument("--type", "-t", choices=["sale", "rental"], default="sale",
+                        help="Comp type: sale (recently sold) or rental (default: sale)")
     parser.add_argument("--county", "-c", choices=county_choices, default="denver",
                         help="County (default: denver)")
     parser.add_argument("--beds", "-b", type=int, default=3,
@@ -372,28 +482,51 @@ def main():
     parser.add_argument("--address", type=str, default=None,
                         help="Subject property address (for reference)")
     parser.add_argument("--load", type=str, default=None,
-                        help="Load comps from JSON file and analyze")
+                        help="Load comps from JSON file, analyze, and save to DB")
     parser.add_argument("--urls-only", action="store_true",
                         help="Only print scraping URLs (don't try to scrape)")
+    parser.add_argument("--db-query", action="store_true",
+                        help="Query existing comps from the database")
+    parser.add_argument("--db-stats", action="store_true",
+                        help="Show database statistics")
 
     args = parser.parse_args()
 
+    # DB stats
+    if args.db_stats:
+        from comps_db import CompsDB, print_stats
+        with CompsDB() as db:
+            print_stats(db)
+        return
+
+    # DB query
+    if args.db_query:
+        from comps_db import CompsDB, print_query_results
+        with CompsDB() as db:
+            comps = db.query(
+                comp_type=args.type, county=args.county,
+                beds=args.beds, limit=50,
+            )
+            print_query_results(comps, args.type)
+        return
+
+    # Load from JSON, analyze, and save to DB
     if args.load:
         comps = load_comps_json(args.load)
         analysis = analyze_comps(args.price, args.sqft, comps)
         print_comp_analysis(analysis, comps)
+        save_comps_to_db(comps, args.type)
         return
 
-    # Always show URLs
-    print_comp_urls(args.county, args.beds, args.price)
+    # Show URLs for the requested comp type
+    print_comp_urls(args.county, args.beds, args.price, args.type)
 
     if not args.urls_only:
-        # Show empty analysis template
         print(f"\n  To analyze comps after scraping:")
         print(f"  1. Save scraped data to comps.json (array of CompRecord objects)")
-        print(f"  2. Run: python comp_extractor.py --load comps.json --price {args.price} --sqft {args.sqft}")
-        print(f"  3. Or import and use programmatically:")
-        print(f"     from comp_extractor import CompRecord, analyze_comps, print_comp_analysis")
+        print(f"  2. Run: python comp_extractor.py --load comps.json --type {args.type} --price {args.price} --sqft {args.sqft}")
+        print(f"  3. Query saved comps: python comp_extractor.py --db-query --type {args.type} --county {args.county}")
+        print(f"  4. DB stats: python comp_extractor.py --db-stats")
 
 
 if __name__ == "__main__":

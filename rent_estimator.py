@@ -401,6 +401,21 @@ def print_all_grades():
     print(f"{'=' * 60}")
 
 
+def query_rental_comps(county_key: str, beds: int | None = None,
+                       min_rent: int | None = None, max_rent: int | None = None,
+                       limit: int = 20):
+    """Query rental comps from the SQLite database."""
+    from comps_db import CompsDB, print_query_results
+    with CompsDB() as db:
+        comps = db.query(
+            comp_type="rental", county=county_key,
+            beds=beds, min_price=min_rent, max_price=max_rent,
+            limit=limit,
+        )
+        print_query_results(comps, "rental")
+        return comps
+
+
 def main():
     county_choices = list(COUNTY_RENTS.keys())
     parser = argparse.ArgumentParser(
@@ -427,11 +442,17 @@ def main():
                         help="Show rental comp scraping URLs")
     parser.add_argument("--grades", action="store_true",
                         help="Show the finish grading rubric")
+    parser.add_argument("--db-comps", action="store_true",
+                        help="Query rental comps from the database")
 
     args = parser.parse_args()
 
     if args.grades:
         print_all_grades()
+        return
+
+    if args.db_comps:
+        query_rental_comps(args.county, args.beds)
         return
 
     est = estimate_rent(
