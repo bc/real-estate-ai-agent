@@ -23,70 +23,49 @@ For **rental** comps:
 uv run comp-extractor --type rental --county <COUNTY> --beds <N>
 ```
 
-## Step 2: Scrape listings
+## Step 2: Scrape with stealth browser (preferred)
 
-For each URL generated:
-1. Use **WebFetch** to load the page
-2. Extract listing data from the HTML:
-   - Sale comps: address, sold price, beds, baths, sqft, sold date, lot size, year built
-   - Rental comps: address, rent/mo, beds, baths, sqft, available date, deposit
-3. Extract ALL photo URLs from each listing page
-4. Compute price_per_sqft = price / sqft
-
-## Step 3: Build comp records
-
-Create JSON with an array of objects. For sale comps:
-```json
-[
-  {
-    "address": "123 Main St",
-    "city": "Denver",
-    "county": "denver",
-    "zip_code": "80202",
-    "latitude": 39.7508,
-    "longitude": -104.9965,
-    "sale_price": 625000,
-    "sale_date": "2026-01-15",
-    "beds": 3,
-    "baths": 2,
-    "sqft": 1800,
-    "lot_sqft": 5000,
-    "year_built": 2005,
-    "price_per_sqft": 347.22,
-    "property_type": "sfh",
-    "listing_url": "https://...",
-    "photo_urls": ["https://...", "https://..."],
-    "source": "zillow",
-    "days_on_market": 12,
-    "garage": "2-car attached",
-    "hoa": 0,
-    "notes": ""
-  }
-]
-```
-
-Include `latitude` and `longitude` if available from the listing. If not, they can be geocoded later with `uv run comp-extractor --geocode`.
-
-For rental comps, use the same format but `sale_price` = monthly rent.
-
-## Step 4: Save to database
+The **browser-scraper** uses Playwright + stealth to bypass bot detection on Zillow, Redfin, etc.:
 
 ```bash
-uv run comp-extractor --load comps.json --type sale --price 625000 --sqft 1800
-uv run comp-extractor --load comps.json --type rental --price 3000 --sqft 1600
+# Rental comps — scrapes Zillow, Trulia, Apartments.com, Craigslist
+uv run browser-scraper --rental --zip 80205 --beds 3
+
+# Recently sold comps
+uv run browser-scraper --sold --zip 80205 --beds 3 --price 475000
+
+# Scrape a specific URL
+uv run browser-scraper --url "https://www.trulia.com/for_rent/80205_zip/3p_beds/"
+
+# Also grab listing photos
+uv run browser-scraper --rental --zip 80205 --beds 3 --photos
+
+# Export to JSON instead of DB
+uv run browser-scraper --rental --zip 80205 --json comps.json
 ```
 
-This saves to `data/comps.db` and shows an analysis.
+Results are auto-saved to the database and geocoded. First-time setup: `uv run playwright install chromium`
+
+## Step 2b: Alternative — WebFetch + manual JSON
+
+If the browser scraper hits CAPTCHAs, use **WebFetch** and build comp records manually:
+
+1. Use WebFetch on each URL to extract listing data
+2. Build a JSON array with CompRecord objects (address, price, beds, baths, sqft, etc.)
+3. Include `latitude`/`longitude` if available, or geocode later with `uv run comp-extractor --geocode`
+4. Load into DB:
+   ```bash
+   uv run comp-extractor --load comps.json --type sale --price 625000 --sqft 1800
+   uv run comp-extractor --load comps.json --type rental --price 3000 --sqft 1600
+   ```
+
+## Step 3: Download photos for finish grading
+
+```bash
+uv run browser-scraper --rental --zip 80205 --beds 3 --photos
+```
 
 Or programmatically:
-```python
-from comp_extractor import CompRecord, save_comps_to_db
-comps = [CompRecord(address="123 Main St", sale_price=625000, ...)]
-save_comps_to_db(comps, comp_type="sale")
-```
-
-## Step 5: Download photos for finish grading
-
 ```python
 from comp_extractor import download_comp_photos
 for comp in comps:

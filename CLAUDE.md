@@ -16,6 +16,7 @@ real-estate-ai-agent/
 ├── comps_db.py                 # SQLite database for all comps + geocoding
 ├── finish_grader.py            # Kitchen/bathroom finish quality grading (A-F)
 ├── appreciation_tracker.py     # Zillow ZHVI data sync + zip-code appreciation
+├── browser_scraper.py         # Stealth headless browser scraper (Playwright)
 ├── pyproject.toml              # uv project config with dependencies + entry points
 ├── uv.lock                     # Locked dependency versions
 ├── CLAUDE.md                   # This file
@@ -43,7 +44,7 @@ real-estate-ai-agent/
 - **Agent framework:** CrewAI (orchestrates AI agents with tools)
 - **MCP integration:** `crewai-tools[mcp]` + `mcp` (Model Context Protocol for Bright Data)
 - **LLM:** Nebius Qwen (`nebius/Qwen/Qwen3-235B-A22B`) via CrewAI's LLM wrapper
-- **Web scraping infrastructure:** Bright Data MCP server (`@brightdata/mcp` npm package)
+- **Web scraping infrastructure:** Bright Data MCP server (`@brightdata/mcp` npm package); Playwright + playwright-stealth for headless browser scraping
 - **Database:** SQLite (comps.db in data/ directory, WAL mode)
 - **Geocoding:** OpenStreetMap Nominatim (free, no API key)
 - **Data handling:** pandas, json (stdlib)
@@ -73,6 +74,7 @@ A `.env` file is required at the project root with these keys:
 ### Setup
 ```sh
 uv sync
+uv run playwright install chromium   # one-time: install headless browser
 ```
 
 ### Available Commands
@@ -89,6 +91,8 @@ uv run comp-extractor --db-query --type sale --near "39.75,-104.99" --radius 2
 uv run comp-extractor --geocode              # Batch geocode comps
 uv run comps-db stats                        # Database overview
 uv run comps-db query --type sale --county denver --beds 3
+uv run browser-scraper --rental --zip 80205 --beds 3   # Stealth scrape rentals
+uv run browser-scraper --sold --zip 80205 --price 475000  # Stealth scrape sold
 uv run finish-grader --rubric                # Finish quality rubric
 uv run appreciation-tracker --county denver  # Appreciation by county
 ```
@@ -110,7 +114,7 @@ uv add <package-name>
 
 ### Dependencies
 - Managed via uv. `pyproject.toml` declares dependencies; `uv.lock` pins exact versions.
-- Most modules (all except `real_estate_agents.py`) use only Python stdlib.
+- Most modules use only Python stdlib. Exceptions: `real_estate_agents.py` (CrewAI/MCP) and `browser_scraper.py` (Playwright).
 
 ### No Tests
 - There are no tests, no test framework, and no CI/CD pipeline.
