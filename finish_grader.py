@@ -278,7 +278,7 @@ def print_grading_workflow(photos_dir: str | None = None, listing_url: str | Non
     if listing_url:
         print(f"  a) Use WebFetch to load the listing URL above")
         print(f"  b) Extract all photo/image URLs from the page")
-        print(f"  c) Download photos using comp_extractor.download_photo()")
+        print(f"  c) Download photos using CompsDB.download_comp_photos(comp_id)")
         print(f"     or use Bash: curl -o photo_001.jpg <URL>")
     if photos_dir:
         print(f"  Photos directory: {photos_dir}")

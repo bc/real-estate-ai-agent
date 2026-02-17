@@ -173,11 +173,19 @@ class RentEstimate:
     grade_label: str
 
 
+VALID_COUNTIES = list(COUNTY_RENTS.keys())
+
+
 def estimate_rent(county_key: str, beds: int, baths: float, sqft: int,
                   grade: str = "C", property_type: str = "sfh",
                   features: list[str] | None = None,
                   year_built: int | None = None) -> RentEstimate:
     """Estimate monthly rent for a property."""
+    county_key = county_key.lower().strip()
+    if county_key not in COUNTY_RENTS:
+        raise ValueError(
+            f"Unknown county '{county_key}'. Valid counties: {', '.join(VALID_COUNTIES)}"
+        )
     profile = COUNTY_RENTS[county_key]
 
     # 1. Base rent from bedroom count

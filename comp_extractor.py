@@ -151,7 +151,11 @@ def analyze_comps(subject_price: int, subject_sqft: int,
     ppsfs = [c.price_per_sqft for c in comps if c.price_per_sqft > 0]
 
     avg_price = int(sum(prices) / len(prices)) if prices else 0
-    median_price = prices[len(prices) // 2] if prices else 0
+    if prices:
+        n = len(prices)
+        median_price = prices[n // 2] if n % 2 else (prices[n // 2 - 1] + prices[n // 2]) // 2
+    else:
+        median_price = 0
     avg_sqft = int(sum(sqfts) / len(sqfts)) if sqfts else 0
     avg_ppsf = round(sum(ppsfs) / len(ppsfs), 2) if ppsfs else 0
 
@@ -388,7 +392,11 @@ def load_comps_json(path: str) -> list[CompRecord]:
 
 
 def download_photo(url: str, dest_dir: str, filename: str | None = None) -> str:
-    """Download a single photo. Returns local file path."""
+    """Download a single photo. Returns local file path.
+
+    DEPRECATED: Prefer CompsDB.download_comp_photos() for DB-tracked downloads.
+    This function is kept for standalone/one-off downloads only.
+    """
     os.makedirs(dest_dir, exist_ok=True)
     if filename is None:
         filename = url.split("/")[-1].split("?")[0]
@@ -407,7 +415,12 @@ def download_photo(url: str, dest_dir: str, filename: str | None = None) -> str:
 
 
 def download_comp_photos(comp: CompRecord, base_dir: str = "comp_photos") -> list[str]:
-    """Download all photos for a comp into a subfolder. Returns local paths."""
+    """Download all photos for a comp into a subfolder. Returns local paths.
+
+    DEPRECATED: Prefer CompsDB.download_comp_photos(comp_id) which downloads
+    into data/photos/{comp_id}/ and tracks download status in the database.
+    This function is kept for backward compatibility only.
+    """
     if not comp.photo_urls:
         return []
     safe_addr = re.sub(r'[^\w\-]', '_', comp.address)[:60]

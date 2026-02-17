@@ -46,44 +46,51 @@ uv run browser-scraper --rental --zip 80205 --json comps.json
 
 Results are auto-saved to the database and geocoded. First-time setup: `uv run playwright install chromium`
 
-## Step 2b: Alternative — WebFetch + manual JSON
+## Step 3: Alternative — WebFetch + manual JSON
 
 If the browser scraper hits CAPTCHAs, use **WebFetch** and build comp records manually:
 
 1. Use WebFetch on each URL to extract listing data
 2. Build a JSON array with CompRecord objects (address, price, beds, baths, sqft, etc.)
-3. Include `latitude`/`longitude` if available, or geocode later with `uv run comp-extractor --geocode`
+3. Include `latitude`/`longitude` if available, or geocode later
 4. Load into DB:
    ```bash
    uv run comp-extractor --load comps.json --type sale --price 625000 --sqft 1800
    uv run comp-extractor --load comps.json --type rental --price 3000 --sqft 1600
    ```
 
-## Step 3: Download photos for finish grading
+## Step 4: Sync and download photos
+
+After comps are in the database, sync photo URLs from the comps table to the comp_photos table, then download:
 
 ```bash
-uv run browser-scraper --rental --zip 80205 --beds 3 --photos
+# Sync photo URLs into the comp_photos tracking table
+uv run comps-db photos --sync
+
+# Download all photos (up to 10 per comp)
+uv run comps-db photos --download-all --max 10
+
+# Download photos for a specific comp
+uv run comps-db photos --download <COMP_ID> --max 20
+
+# List photos for a comp
+uv run comps-db photos --list <COMP_ID>
 ```
 
-Or programmatically:
-```python
-from comp_extractor import download_comp_photos
-for comp in comps:
-    paths = download_comp_photos(comp)
-```
+Photos are saved to `data/photos/<comp_id>/photo_000.jpg` and tracked in the database.
 
 Then use the **finish-grade** skill to view and grade kitchen/bathroom photos.
 
-## Step 6: Geocode saved comps
+## Step 5: Geocode saved comps
 
 After saving, geocode comps for distance searching:
 ```bash
-uv run comp-extractor --geocode            # batch geocode all missing
-uv run comp-extractor --geocode-id <ID>    # geocode a single comp
-uv run comps-db geocode                    # via DB CLI
+uv run comps-db geocode                    # batch geocode all missing
+uv run comps-db geocode --id <ID>          # geocode a single comp
+uv run comp-extractor --geocode            # alternative via comp_extractor
 ```
 
-## Step 7: Query saved comps
+## Step 6: Query saved comps
 
 By county/beds:
 ```bash
@@ -116,6 +123,11 @@ The SQLite database (`data/comps.db`) stores both sale and rental comps in a sin
 - Common fields: address, city, county, zip, beds, baths, sqft, etc.
 - Sale-specific: sale_date, days_on_market, list_price, sale_to_list
 - Rental-specific: lease_type, available_date, deposit, pet_policy
-- Photos stored as JSON array of URLs
+- Photos: JSON array of URLs in `photo_urls` column, plus structured `comp_photos` table
 - Automatic dedup on (comp_type, address, price, source)
 - Spatial index on (latitude, longitude) for fast nearby queries
+
+The `comp_photos` table provides structured photo tracking:
+- Linked to comps via `comp_id` foreign key
+- Tracks download status, local file path, room type tagging
+- Supports photo-by-photo room classification for finish grading

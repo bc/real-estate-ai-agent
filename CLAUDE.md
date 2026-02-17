@@ -29,6 +29,9 @@ real-estate-ai-agent/
     ├── comps-search/           # Shared scrape-and-store pipeline
     ├── rent-estimate/          # Rent estimation workflow
     ├── finish-grade/           # Photo-based finish quality grading
+    ├── scrape-and-grade/       # End-to-end comps + photos + grading
+    ├── property-analysis/      # Full investment analysis (meta-skill)
+    ├── refinance-analyzer/     # Mortgage refinance tradeoff analysis
     ├── appreciation/           # Zip-code appreciation lookup
     ├── denver-tax/             # Denver County property tax
     ├── douglas-tax/            # Douglas County property tax

@@ -141,14 +141,35 @@ NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 NOMINATIM_HEADERS = {"User-Agent": "real-estate-ai-agent/1.0 (property comp tool)"}
 
 
+DIRECTIONAL_PREFIXES = {
+    " N ": " North ", " S ": " South ", " E ": " East ", " W ": " West ",
+    " NE ": " Northeast ", " NW ": " Northwest ",
+    " SE ": " Southeast ", " SW ": " Southwest ",
+}
+
+
+def _expand_directionals(address: str) -> str:
+    """Expand directional abbreviations for better geocoding accuracy.
+
+    '3726 N Gilpin St' -> '3726 North Gilpin St'
+    '2142 S Gilpin St' -> '2142 South Gilpin St'
+    """
+    padded = f" {address} "
+    for abbrev, full in DIRECTIONAL_PREFIXES.items():
+        padded = padded.replace(abbrev, full)
+    return padded.strip()
+
+
 def geocode_address(address: str, city: str = "", state: str = "CO",
                     zip_code: str = "") -> tuple[float, float] | None:
     """Geocode a street address using OpenStreetMap Nominatim.
 
     Returns (latitude, longitude) or None if not found.
     Rate limit: 1 request/second (Nominatim policy).
+    Expands directional abbreviations (N/S/E/W) for Nominatim compatibility.
     """
-    parts = [address]
+    expanded = _expand_directionals(address)
+    parts = [expanded]
     if city:
         parts.append(city)
     if state:
