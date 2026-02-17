@@ -43,6 +43,7 @@ from typing import Optional
 
 DB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 DB_PATH = os.path.join(DB_DIR, "comps.db")
+PHOTOS_DIR = os.path.join(DB_DIR, "photos")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS comps (
@@ -105,6 +106,24 @@ CREATE INDEX IF NOT EXISTS idx_comps_beds       ON comps(beds);
 CREATE INDEX IF NOT EXISTS idx_comps_price      ON comps(price);
 CREATE INDEX IF NOT EXISTS idx_comps_type_county ON comps(comp_type, county);
 CREATE INDEX IF NOT EXISTS idx_comps_lat_lng    ON comps(latitude, longitude);
+
+CREATE TABLE IF NOT EXISTS comp_photos (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    comp_id         INTEGER NOT NULL,
+    url             TEXT NOT NULL DEFAULT '',
+    local_path      TEXT NOT NULL DEFAULT '',
+    room_type       TEXT NOT NULL DEFAULT '',   -- kitchen, bathroom, exterior, bedroom, living, other, unknown
+    position        INTEGER NOT NULL DEFAULT 0, -- photo order in listing (0-indexed)
+    width           INTEGER NOT NULL DEFAULT 0,
+    height          INTEGER NOT NULL DEFAULT 0,
+    downloaded      INTEGER NOT NULL DEFAULT 0, -- 1 = downloaded locally
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (comp_id) REFERENCES comps(id) ON DELETE CASCADE,
+    UNIQUE(comp_id, url)
+);
+
+CREATE INDEX IF NOT EXISTS idx_photos_comp_id   ON comp_photos(comp_id);
+CREATE INDEX IF NOT EXISTS idx_photos_room_type ON comp_photos(room_type);
 """
 
 # Migration for existing databases that lack the geo columns
@@ -462,6 +481,136 @@ class CompsDB:
         self.conn.commit()
         return count
 
+    # ------------------------------------------------------------------
+    # Photo management
+    # ------------------------------------------------------------------
+
+    def save_photo_urls(self, comp_id: int, urls: list[str]) -> int:
+        """Save photo URLs for a comp. Returns count of newly inserted rows."""
+        count = 0
+        for i, url in enumerate(urls):
+            try:
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO comp_photos (comp_id, url, position) VALUES (?, ?, ?)",
+                    (comp_id, url, i),
+                )
+                count += 1
+            except sqlite3.IntegrityError:
+                pass
+        self.conn.commit()
+        return count
+
+    def get_photos(self, comp_id: int, room_type: str | None = None) -> list[dict]:
+        """Get photos for a comp. Optionally filter by room_type."""
+        sql = "SELECT * FROM comp_photos WHERE comp_id = ?"
+        params: list = [comp_id]
+        if room_type:
+            sql += " AND room_type = ?"
+            params.append(room_type)
+        sql += " ORDER BY position"
+        rows = self.conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def set_photo_room_type(self, photo_id: int, room_type: str):
+        """Tag a photo with its room type (kitchen, bathroom, etc)."""
+        self.conn.execute(
+            "UPDATE comp_photos SET room_type = ? WHERE id = ?",
+            (room_type, photo_id),
+        )
+        self.conn.commit()
+
+    def download_comp_photos(self, comp_id: int, max_photos: int = 30) -> list[str]:
+        """Download photos for a comp into data/photos/{comp_id}/.
+
+        Returns list of local file paths. Skips already-downloaded photos.
+        """
+        dest_dir = os.path.join(PHOTOS_DIR, str(comp_id))
+        os.makedirs(dest_dir, exist_ok=True)
+
+        rows = self.conn.execute(
+            "SELECT id, url, position, downloaded FROM comp_photos "
+            "WHERE comp_id = ? ORDER BY position LIMIT ?",
+            (comp_id, max_photos),
+        ).fetchall()
+
+        paths = []
+        for row in rows:
+            if row["downloaded"]:
+                lp = self.conn.execute(
+                    "SELECT local_path FROM comp_photos WHERE id = ?", (row["id"],)
+                ).fetchone()
+                if lp and lp["local_path"] and os.path.exists(lp["local_path"]):
+                    paths.append(lp["local_path"])
+                    continue
+
+            url = row["url"]
+            ext = "jpg"
+            if ".png" in url:
+                ext = "png"
+            elif ".webp" in url:
+                ext = "webp"
+            fname = f"photo_{row['position']:03d}.{ext}"
+            fpath = os.path.join(dest_dir, fname)
+
+            try:
+                req = urllib.request.Request(url, headers={
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                                  "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                })
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    with open(fpath, "wb") as f:
+                        f.write(resp.read())
+                self.conn.execute(
+                    "UPDATE comp_photos SET local_path = ?, downloaded = 1 WHERE id = ?",
+                    (fpath, row["id"]),
+                )
+                paths.append(fpath)
+            except Exception as e:
+                print(f"  WARNING: Failed to download photo {row['position']}: {e}")
+
+        self.conn.commit()
+        return paths
+
+    def sync_photo_urls_from_comps(self) -> int:
+        """Populate comp_photos table from photo_urls JSON in comps table.
+
+        For comps that have photo_urls but no entries in comp_photos yet.
+        Returns count of photos added.
+        """
+        rows = self.conn.execute(
+            "SELECT id, photo_urls FROM comps WHERE photo_urls != '[]' AND photo_urls != ''"
+        ).fetchall()
+        total = 0
+        for row in rows:
+            try:
+                urls = json.loads(row["photo_urls"]) if isinstance(row["photo_urls"], str) else row["photo_urls"]
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if urls:
+                total += self.save_photo_urls(row["id"], urls)
+        return total
+
+    def photo_stats(self) -> dict:
+        """Get photo statistics."""
+        total = self.conn.execute("SELECT COUNT(*) FROM comp_photos").fetchone()[0]
+        downloaded = self.conn.execute(
+            "SELECT COUNT(*) FROM comp_photos WHERE downloaded = 1"
+        ).fetchone()[0]
+        comps_with_photos = self.conn.execute(
+            "SELECT COUNT(DISTINCT comp_id) FROM comp_photos"
+        ).fetchone()[0]
+        by_room = {}
+        for row in self.conn.execute(
+            "SELECT room_type, COUNT(*) as cnt FROM comp_photos GROUP BY room_type ORDER BY cnt DESC"
+        ).fetchall():
+            by_room[row["room_type"] or "untagged"] = row["cnt"]
+        return {
+            "total_photos": total,
+            "downloaded": downloaded,
+            "comps_with_photos": comps_with_photos,
+            "by_room_type": by_room,
+        }
+
     def count(self, comp_type: str | None = None, county: str | None = None) -> int:
         """Count comps matching filters."""
         clauses = []
@@ -512,6 +661,8 @@ class CompsDB:
             "SELECT COUNT(*) FROM comps WHERE latitude != 0 AND longitude != 0"
         ).fetchone()[0]
 
+        photo_info = self.photo_stats()
+
         return {
             "total": total,
             "sales": sales,
@@ -521,6 +672,7 @@ class CompsDB:
             "avg_rental_price": avg_rental,
             "by_county": county_counts,
             "by_source": source_counts,
+            "photos": photo_info,
             "db_path": self.db_path,
         }
 
@@ -596,6 +748,16 @@ def print_stats(db: CompsDB):
         print(f"\n  --- By Source ---")
         for src, count in s["by_source"].items():
             print(f"    {src:<30s} {count:,}")
+
+    p = s.get("photos", {})
+    if p.get("total_photos", 0):
+        print(f"\n  --- Photos ---")
+        print(f"    {'Total photo links':<30s} {p['total_photos']:,}")
+        print(f"    {'Downloaded locally':<30s} {p['downloaded']:,}")
+        print(f"    {'Comps with photos':<30s} {p['comps_with_photos']:,}")
+        if p.get("by_room_type"):
+            for room, cnt in p["by_room_type"].items():
+                print(f"    {'  ' + room:<30s} {cnt:,}")
 
     print(f"\n{'=' * 60}")
 
@@ -709,6 +871,19 @@ def main():
     i.add_argument("--file", "-f", type=str, required=True)
     i.add_argument("--type", choices=["sale", "rental"], required=True)
 
+    # photos
+    p = sub.add_parser("photos", help="Manage comp photos")
+    p.add_argument("--sync", action="store_true",
+                   help="Populate comp_photos table from photo_urls in comps")
+    p.add_argument("--download", type=int, default=None, metavar="COMP_ID",
+                   help="Download photos for a specific comp ID")
+    p.add_argument("--download-all", action="store_true",
+                   help="Download photos for all comps that have URLs")
+    p.add_argument("--list", type=int, default=None, metavar="COMP_ID",
+                   help="List photos for a comp ID")
+    p.add_argument("--max", type=int, default=30,
+                   help="Max photos to download per comp (default: 30)")
+
     args = parser.parse_args()
 
     with CompsDB() as db:
@@ -791,6 +966,50 @@ def main():
                 if missing:
                     count = db.geocode_missing(limit=args.limit, delay=args.delay)
                     print(f"\n  Geocoded {count} comps successfully")
+
+        elif args.command == "photos":
+            if args.sync:
+                count = db.sync_photo_urls_from_comps()
+                print(f"  Synced {count} photo URLs to comp_photos table")
+            elif args.download is not None:
+                paths = db.download_comp_photos(args.download, max_photos=args.max)
+                print(f"  Downloaded {len(paths)} photos for comp {args.download}")
+                for p in paths:
+                    print(f"    {p}")
+            elif args.download_all:
+                comp_ids = [row[0] for row in db.conn.execute(
+                    "SELECT DISTINCT comp_id FROM comp_photos WHERE downloaded = 0"
+                ).fetchall()]
+                total = 0
+                for cid in comp_ids:
+                    paths = db.download_comp_photos(cid, max_photos=args.max)
+                    total += len(paths)
+                    if paths:
+                        print(f"  Comp {cid}: downloaded {len(paths)} photos")
+                print(f"\n  Total: downloaded {total} photos for {len(comp_ids)} comps")
+            elif args.list is not None:
+                photos = db.get_photos(args.list)
+                if not photos:
+                    print(f"  No photos for comp {args.list}")
+                else:
+                    print(f"\n  Photos for comp {args.list}:")
+                    for p in photos:
+                        dl = "Y" if p["downloaded"] else "N"
+                        room = p["room_type"] or "-"
+                        local = p["local_path"] or "-"
+                        print(f"    [{p['position']:3d}] {room:<10s} DL={dl}  {local}")
+                        print(f"          {p['url'][:100]}")
+            else:
+                ps = db.photo_stats()
+                print(f"\n  --- Photo Stats ---")
+                print(f"  {'Total photo links':<30s} {ps['total_photos']:,}")
+                print(f"  {'Downloaded locally':<30s} {ps['downloaded']:,}")
+                print(f"  {'Comps with photos':<30s} {ps['comps_with_photos']:,}")
+                print(f"  {'Photos directory':<30s} {PHOTOS_DIR}")
+                if ps.get("by_room_type"):
+                    print(f"\n  --- By Room Type ---")
+                    for room, cnt in ps["by_room_type"].items():
+                        print(f"    {room:<30s} {cnt:,}")
 
         else:
             parser.print_help()

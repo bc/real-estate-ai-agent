@@ -460,12 +460,19 @@ def comps_to_db_rows(comps: list[CompRecord], comp_type: str = "sale"):
 
 
 def save_comps_to_db(comps: list[CompRecord], comp_type: str = "sale") -> int:
-    """Save CompRecords to the SQLite database. Returns count inserted."""
+    """Save CompRecords to the SQLite database. Returns count inserted.
+
+    Also syncs photo URLs to the comp_photos table for any comps that have them.
+    """
     from comps_db import CompsDB
     rows = comps_to_db_rows(comps, comp_type)
     with CompsDB() as db:
         count = db.insert_many(rows)
         total = db.count(comp_type)
+        # Sync any photo URLs to the comp_photos table
+        photo_count = db.sync_photo_urls_from_comps()
+        if photo_count:
+            print(f"  Synced {photo_count} photo URLs to photos table")
     print(f"  Saved {count} new {comp_type} comps to database ({total} total {comp_type} comps)")
     return count
 
